@@ -94,6 +94,7 @@ Version ubuntu16.04-root06.08.06-gpu-py3
     pip3 --no-cache-dir -q install ipython #'ipython<6.0'
     pip3 --no-cache-dir -q install ipykernel
     pip3 --no-cache-dir -q install jupyter notebook
+    pip3 --no-cache-dir -q install pytest
 
     # pytorch
     pip3 --no-cache-dir -q install https://download.pytorch.org/whl/cu100/torch-1.1.0-cp36-cp36m-linux_x86_64.whl
@@ -136,7 +137,7 @@ Version ubuntu16.04-root06.08.06-gpu-py3
     #cd SparseConvNet
     #git checkout pytorch_dev20181225
     #python3 setup.py install
-    pip3 --no-cache-dir install -i https://test.pypi.org/simple/ scn-cuda10-py3=="0.2.415.27"
+    pip3 --no-cache-dir -q install -i https://test.pypi.org/simple/ scn-cuda10-py3=="0.2.415.27"
 
 
     # pytorch-geometric
