@@ -40,11 +40,12 @@ install: true
 
 before_script:
   - which singularity
-  - singularity --help
+  - singularity pull --help
 #  - singularity pull -n local.img shub://DeepLearnPhysics/larcv2-singularity:ub18.04-cuda100-py3-pytorch1.1.0-scn
 #  - sudo singularity build local.img .travis/Singularity.ub18.04-cuda100-py3-pytorch1.1.0-scn
-  - singularity pull -n local.img library://temigo/default/lartpc_mlreco3d:sha256.2f2b3011371e109db83e21b556d3d82f21b639acad4a412589429e9b9abc53de
-  - singularity exec local.simg bash
+  - singularity pull library://temigo/default/lartpc_mlreco3d:sha256.2f2b3011371e109db83e21b556d3d82f21b639acad4a412589429e9b9abc53de
+  - ls
+  - singularity exec lartpc_mlreco3d_sha256.2f2b3011371e109db83e21b556d3d82f21b639acad4a412589429e9b9abc53de.sif bash
 
 script:
   - pytest
