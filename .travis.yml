@@ -41,7 +41,8 @@ install: true
 before_script:
   - which singularity
   - singularity --help
-  - singularity pull -n local.img shub://DeepLearnPhysics/larcv2-singularity:ub18.04-cuda100-py3-pytorch1.1.0-scn
+#  - singularity pull -n local.img shub://DeepLearnPhysics/larcv2-singularity:ub18.04-cuda100-py3-pytorch1.1.0-scn
+  - sudo singularity build local.img .travis/Singularity.ub18.04-cuda100-py3-pytorch1.1.0-scn
   - singularity exec local.simg bash
 
 script:
