@@ -2,6 +2,9 @@ os: linux
 
 language: python
 
+go:
+  - "1.11"
+
 python:
   -"3.6"
 
@@ -25,10 +28,9 @@ addons:
 
 sudo: required
 
-
-matrix:
-  include:
-    - python: "3.6"
+# matrix:
+#   include:
+#     - python: "3.6"
 
 before_install:
   - sudo chmod u+x .travis/*.sh
@@ -37,6 +39,8 @@ before_install:
 install: true
 
 before_script:
+  - which singularity
+  - singularity --help
   - singularity pull -n local.img shub://DeepLearnPhysics/larcv2-singularity:ub18.04-cuda100-py3-pytorch1.1.0-scn
   - singularity exec local.simg bash
 
