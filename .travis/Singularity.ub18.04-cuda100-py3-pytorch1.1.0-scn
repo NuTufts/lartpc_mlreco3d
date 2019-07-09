@@ -52,6 +52,9 @@ Version ubuntu16.04-root06.08.06-gpu-py3
     export LD_LIBRARY_PATH=${LARCV_LIBDIR}:${LD_LIBRARY_PATH}:
     export PYTHONPATH=${LARCV_BASEDIR}/python:${PYTHONPATH}
 
+# Set up for tzdata prompt on timezone
+    ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime
+    export DEBIAN_FRONTEND=noninteractive
 %post
     # apt-get
     apt-get -y update
