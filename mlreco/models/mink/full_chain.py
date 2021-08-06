@@ -46,11 +46,12 @@ class MinkFullChain(FullChainGNN):
             self.gs_manager                = ClusterGraphConstructor(cfg['graph_spice']['constructor_cfg'])
             #self.gs_manager.training       = True # FIXME
             self._gspice_skip_classes      = cfg['graph_spice']['skip_classes']
-            self._gspice_fragment_manager  = GraphSPICEFragmentManager(cfg['graph_spice']['gspice_fragment_manager'])
+            self._gspice_fragment_manager  = GraphSPICEFragmentManager(cfg['graph_spice']['gspice_fragment_manager'], batch_col=self.batch_col)
 
         if self.enable_dbscan:
             self.frag_cfg = cfg['dbscan']['dbscan_fragment_manager']
             self.dbscan_fragment_manager = DBSCANFragmentManager(self.frag_cfg,
+                                                                 batch_col=self.batch_col,
                                                                  mode='mink')
 
         # Initialize the interaction classifier module

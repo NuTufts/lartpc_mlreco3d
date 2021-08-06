@@ -30,10 +30,10 @@ class SCNFullChain(FullChainGNN):
             self._enable_graph_spice = 'graph_spice' in cfg
             if self._enable_graph_spice:
                 self.spatial_embeddings       = GraphSPICE(cfg)
-                self.gs_manager               = ClusterGraphConstructor(cfg['graph_spice']['constructor_cfg'])
+                self.gs_manager               = ClusterGraphConstructor(cfg['graph_spice']['constructor_cfg'], batch_col=self.batch_col)
                 self.gs_manager.training      = True # FIXME
                 self._gspice_skip_classes     = cfg['graph_spice']['skip_classes']
-                self.gspice_fragment_manager  = GraphSPICEFragmentManager(cfg['graph_spice']['gspice_fragment_manager'])
+                self.gspice_fragment_manager  = GraphSPICEFragmentManager(cfg['graph_spice']['gspice_fragment_manager'], batch_col=self.batch_col)
             else:
                 self.spatial_embeddings     = ClusterCNN(cfg['spice'])
                 self.frag_cfg               = cfg['spice'].get('spice_fragment_manager', {})
@@ -41,12 +41,12 @@ class SCNFullChain(FullChainGNN):
                 self._p_thresholds          = self.frag_cfg.setdefault('p_thresholds', [0.5, 0.5, 0.5, 0.5])
                 self._spice_classes         = self.frag_cfg.setdefault('cluster_classes', [])
                 self._spice_min_voxels      = self.frag_cfg.setdefault('min_voxels', 2)
-                self.spice_fragment_manager = SPICEFragmentManager(self.frag_cfg)
+                self.spice_fragment_manager = SPICEFragmentManager(self.frag_cfg, batch_col=self.batch_col)
 
         # Initialize the DBSCAN fragmenter module
         if self.enable_dbscan:
             self.frag_cfg = cfg['dbscan']['dbscan_fragment_manager']
-            self.dbscan_fragment_manager = DBSCANFragmentManager(self.frag_cfg)
+            self.dbscan_fragment_manager = DBSCANFragmentManager(self.frag_cfg, batch_col=self.batch_col)
 
         # Initialize the interaction classifier module
         if self.enable_cosmic:
