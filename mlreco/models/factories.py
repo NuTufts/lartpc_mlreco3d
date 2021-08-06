@@ -8,7 +8,7 @@ def model_dict():
     from .scn import clustercnn_se
     from .scn import graph_spice
     from .scn import particle_types
-    
+
     from . import grappa
 
     from .mink import uresnet as mink_uresnet
@@ -43,7 +43,7 @@ def model_dict():
 
         # --------------------MinkowskiEngine Backend----------------------
         # UresNet
-        "mink_uresnet": (mink_uresnet.UResNet_Chain, uresnet_lonely.SegmentationLoss),
+        "mink_uresnet": (mink_uresnet.UResNet_Chain, mink_uresnet.SegmentationLoss),
         # UResNet + PPN
         'mink_uresnet_ppn_chain': (mink_uresnet_ppn_chain.UResNetPPN, mink_uresnet_ppn_chain.UResNetPPNLoss),
         # Single Particle Classifier
@@ -51,7 +51,7 @@ def model_dict():
         # SPICE
         "mink_spice": (mink_spice.MinkSPICE, mink_spice.SPICELoss),
         # Graph SPICE
-        "mink_graph_spice": (mink_graph_spice.MinkGraphSPICE, graph_spice.GraphSPICELoss),
+        "mink_graph_spice": (mink_graph_spice.MinkGraphSPICE, mink_graph_spice.GraphSPICELoss),
         # Bayesian Classifier
         "bayes_singlep": (mink_singlep.BayesianParticleClassifier, mink_singlep.ParticleTypeLoss),
         # Bayesian UResNet
