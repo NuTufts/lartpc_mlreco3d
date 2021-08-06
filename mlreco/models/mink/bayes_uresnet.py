@@ -8,9 +8,9 @@ from mlreco.models.mink.layers.factories import (activations_dict,
                                           activations_construct,
                                           normalizations_construct)
 from mlreco.models.mink.layers.network_base import MENetworkBase
-from mlreco.bayes.encoder import MCDropoutEncoder
-from mlreco.bayes.decoder import MCDropoutDecoder
-from mlreco.bayes.factories import uq_classification_loss_construct
+from mlreco.models.experimental.bayes.encoder import MCDropoutEncoder
+from mlreco.models.experimental.bayes.decoder import MCDropoutDecoder
+from mlreco.models.experimental.bayes.factories import uq_classification_loss_construct
 
 class BayesianUResNet(MENetworkBase):
 
