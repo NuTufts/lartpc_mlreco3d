@@ -119,7 +119,11 @@ def CollateSparse(batch):
                                            axis=1 ) for batch_id, sample in enumerate(batch) ],
                                  axis = 0)
                 data = concat([sample[key][1] for sample in batch], axis=0)
-                result[key] = concat([voxels, data], axis=1)
+                try:
+                    result[key] = concat([voxels, data], axis=1)
+                except:
+                    print("eror with datakey=",key,": coudl not cat voxels=",voxels.shape," and data=",data.shape)
+                
             elif isinstance(batch[0][key],np.ndarray) and \
                  len(batch[0][key].shape) == 1:
                  #

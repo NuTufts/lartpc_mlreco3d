@@ -1,6 +1,7 @@
 import os, glob
 import numpy as np
 from torch.utils.data import Dataset
+import mlreco.iotools.parser_factory as parser_factory
 import mlreco.iotools.parsers
 
 class LArCVDataset(Dataset):
@@ -51,7 +52,17 @@ class LArCVDataset(Dataset):
             if not hasattr(mlreco.iotools.parsers,value[0]):
                 print('The specified parser name %s does not exist!' % value[0])
             self._data_keys.append(key)
-            self._data_parsers.append((getattr(mlreco.iotools.parsers,value[0]),value[1:]))
+            parser = None
+            try:
+                parser = getattr(mlreco.iotools.parsers,value[0])
+            except:
+                parser = None
+
+            if parser is None:
+                print("Trying to get parser '%s' from parser_factory"%(value[0]))
+                parser = parser_factory.get_parser( value[0] )
+                                
+            self._data_parsers.append((parser,value[1:]))
             for data_key in value[1:]:
                 if isinstance(data_key, dict): data_key = list(data_key.values())[0]
                 if data_key in self._trees: continue
@@ -164,9 +175,11 @@ class LArCVDataset(Dataset):
             tree.GetEntry(event_idx)
         # Create data chunks
         result = {}
+        #print("create data chunks")
         for index, (parser, datatree_keys) in enumerate(self._data_parsers):
+            #print(index,(parser, datatree_keys))
             if isinstance(datatree_keys[0], dict):
-                data = [(getattr(self._trees[list(d.values())[0]], list(d.values())[0] + '_branch'), list(d.keys())[0]) for d in datatree_keys]
+                data = [(getattr(self._trees[list(d.values())[0]], list(d.keys())[0] + '_branch'), list(d.keys())[0]) for d in datatree_keys]
             else:
                 data = [getattr(self._trees[key], key + '_branch') for key in datatree_keys]
             name = self._data_keys[index]

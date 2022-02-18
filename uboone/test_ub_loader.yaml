@@ -1,0 +1,29 @@
+iotool:
+  batch_size: 1
+  minibatch_size: 1
+  shuffle: False
+  num_workers: 1
+  collate_fn: CollateSparse
+  sampler:
+    name: RandomSequenceSampler
+  dataset:
+    name: LArCVDataset
+    data_keys:
+      - test_mlreco.root
+    limit_num_files: 10
+    schema:
+      input_data:
+        - parse_ub_sparse3d_me
+        - coord_v: larvoxel_mlreco
+        - feat_v: larvoxel_mlreco
+      segment_label:
+        - parse_ub_sparse3d_me
+        - coord_v: larvoxel_mlreco
+        - ssnetpid_v: larvoxel_mlreco
+      particles_label:
+        - parse_ub_particle_points
+        - partpos_vox_v: larvoxel_mlreco
+        - partlabel_v: larvoxel_mlreco
+
+
+
