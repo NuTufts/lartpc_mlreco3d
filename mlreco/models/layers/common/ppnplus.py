@@ -382,7 +382,9 @@ class PPNLonelyLoss(torch.nn.modules.loss._Loss):
         assert len(particles_label) == len(segment_label)
 
         ppn_output_coordinates = result['ppn_output_coordinates']
-        # print("PPN Output Coordinates = ", ppn_output_coordinates[0].shape)
+        #print("PPN Output Coordinates = ", ppn_output_coordinates[0].shape)
+        #print(" particles_label = ",particles_label[0].shape)
+        #print(" segment_label = ",segment_label[0].shape)
         # assert False
         # print(result['ppn_coords'][0][-1])
         batch_ids = [result['ppn_coords'][0][-1][:, 0]]

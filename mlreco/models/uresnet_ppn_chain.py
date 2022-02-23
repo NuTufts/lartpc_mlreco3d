@@ -91,4 +91,8 @@ class UResNetPPNLoss(nn.Module):
             'reg_loss': res_ppn['reg_loss'],
             'type_loss': res_ppn['type_loss']
         }
+        print("[UResNetPPNLoss] -------------")
+        for k,v in res.items():
+            print(k,": ",v)
+        print("------------------------------")
         return res

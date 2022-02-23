@@ -141,7 +141,7 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
         self._alpha = self._cfg.get('alpha', 1.0)
         self._beta = self._cfg.get('beta', 1.0)
         self._weight_loss = self._cfg.get('weight_loss', False)
-        self.cross_entropy = torch.nn.CrossEntropyLoss(reduction='none')
+        self.cross_entropy = torch.nn.CrossEntropyLoss(reduction='none',ignore_index=-1)
         self._batch_col = batch_col
 
     def forward(self, result, label, weights=None):
@@ -182,9 +182,10 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                         print('Invalid semantic label found (will be ignored)')
                         print('Semantic label values:',unique_label)
                         print('Label counts:',unique_count)
+                    print("event_label:: unique=",unique_label,"counts=",unique_count)
                     event_ghost = result['ghost'][i][batch_index]  # (N, 2)
                     # 0 = not a ghost point, 1 = ghost point
-                    mask_label = (event_label == self._num_classes).long()
+                    mask_label = (event_label == self._ghost_label).long()
                     # loss_mask = self.cross_entropy(event_ghost, mask_label)
                     num_ghost_points = (mask_label == 1).sum().float()
                     num_nonghost_points = (mask_label == 0).sum().float()
@@ -202,19 +203,19 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                         # Accuracy ghost2ghost = fraction of correcly predicted
                         # ghost points as ghost points
                         if float(num_ghost_points.item()) > 0:
-                            ghost2ghost += (predicted_mask[event_label == self._num_classes] == 1).sum().item() / float(num_ghost_points.item())
+                            ghost2ghost += (predicted_mask[mask_label==1] == 1).sum().item() / float(num_ghost_points.item())
 
                         # Accuracy noghost2noghost = fraction of correctly predicted
                         # non ghost points as non ghost points
                         if float(num_nonghost_points.item()) > 0:
-                            nonghost2nonghost += (predicted_mask[event_label < self._num_classes] == 0).sum().item() / float(num_nonghost_points.item())
+                            nonghost2nonghost += (predicted_mask[mask_label==0] == 0).sum().item() / float(num_nonghost_points.item())
 
                         # Global ghost predictions accuracy
                         acc_mask = predicted_mask.eq_(mask_label).sum().item() / float(predicted_mask.nelement())
                         mask_acc += acc_mask
 
                     # Now mask to compute the rest of UResNet loss
-                    mask = event_label < self._num_classes
+                    mask = mask_label==0
                     event_segmentation = event_segmentation[mask]
                     event_label = event_label[mask]
                 else:
@@ -251,7 +252,10 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                     # Accuracy for semantic segmentation
                     with torch.no_grad():
                         predicted_labels = torch.argmax(event_segmentation, dim=-1)
-                        acc = predicted_labels.eq_(event_label).sum().item() / float(predicted_labels.nelement())
+                        if self._ghost:
+                            acc = predicted_labels.eq_(event_label).sum().item() / float(predicted_labels.nelement())
+                        else:
+                            acc = predicted_labels.eq_(event_label).sum().item() / float(predicted_labels.nelement())
                         uresnet_acc += acc
 
                         # Class accuracy
@@ -275,6 +279,8 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                 'ghost2ghost': ghost2ghost / count,
                 'nonghost2nonghost': nonghost2nonghost / count
             }
+            for k,v in results.items():
+                print(" ",k,": ",v)
         else:
             results = {
                 'accuracy': uresnet_acc/count,
