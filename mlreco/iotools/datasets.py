@@ -179,7 +179,7 @@ class LArCVDataset(Dataset):
         for index, (parser, datatree_keys) in enumerate(self._data_parsers):
             #print(index,(parser, datatree_keys))
             if isinstance(datatree_keys[0], dict):
-                data = [(getattr(self._trees[list(d.values())[0]], list(d.keys())[0] + '_branch'), list(d.keys())[0]) for d in datatree_keys]
+                data = [[getattr(self._trees[list(d.values())[0]], list(d.keys())[0] + '_branch'), list(d.keys())[0]] for d in datatree_keys]
             else:
                 data = [getattr(self._trees[key], key + '_branch') for key in datatree_keys]
             name = self._data_keys[index]
