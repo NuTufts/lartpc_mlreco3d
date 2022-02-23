@@ -9,7 +9,7 @@ current_directory = os.path.dirname(os.path.abspath(__file__))
 current_directory = os.path.dirname(current_directory)
 sys.path.insert(0, current_directory)
 from mlreco.main_funcs import process_config, train, inference
-
+import mlreco.iotools.ubparsers
 
 def main(config):
     cfg_file = config

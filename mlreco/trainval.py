@@ -181,7 +181,8 @@ class trainval(object):
         It is a dictionary where data_blob[key] = list of length
         BATCH_SIZE / (MINIBATCH_SIZE * len(GPUS))
         """
-
+        torch.cuda.empty_cache()
+        
         self._watch.start('train')
         self._loss = []  # Initialize loss accumulator
         data_blob,res_combined = self.forward(data_iter, iteration=iteration)

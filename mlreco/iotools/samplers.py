@@ -29,7 +29,10 @@ class AbstractBatchSampler(Sampler):
 
 class RandomSequenceSampler(AbstractBatchSampler):
     def __iter__(self):
-        starts = self._random.randint(low=0, high=self._data_size - self._minibatch_size, size=(len(self),))
+        if self._data_size>1:
+            starts = self._random.randint(low=0, high=self._data_size - self._minibatch_size, size=(len(self),))
+        else:
+            starts = np.array([0],dtype=np.int)
         return iter(np.concatenate([np.arange(start, start+self._minibatch_size) for start in starts]))
 
     @staticmethod
