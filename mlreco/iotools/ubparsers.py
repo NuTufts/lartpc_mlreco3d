@@ -46,11 +46,13 @@ def parse_ub_particle_points(data,include_point_tagging=False):
         a numpy array with the shape (N, 2) where 2 represents the class of the ground truth point
         and the particle data index in this order. (optionally: end/start tagging)
     """
+    verbose = False
+    if verbose: print("[parse_ub_particle_points] ===================================")    
     kp_vox_pos = data[0][0].at(0).tonumpy()
     kp_labels  = data[1][0].at(0).tonumpy()
     vtxvox     = data[2][0]
-    print("pre-filter num keypoints: ",kp_vox_pos.shape[0])
-    print("kplabels vtxvox: ",(vtxvox[0],vtxvox[1],vtxvox[2]))
+    if verbose: print("pre-filter num keypoints: ",kp_vox_pos.shape[0])
+    if verbose: print("kplabels vtxvox: ",(vtxvox[0],vtxvox[1],vtxvox[2]))
     cropsize = [768,768,768]
     
     xpos = np.copy(kp_vox_pos)
@@ -66,8 +68,8 @@ def parse_ub_particle_points(data,include_point_tagging=False):
         xlabels = xlabels[ xfilter[:], : ]
 
         xpos[:,i] -= vtxvox[i]
-    print("post-filter num keypoints: xpos=",xpos.shape," xfeat=",xlabels.shape)
-    
+    if verbose: print("post-filter num keypoints: xpos=",xpos.shape," xfeat=",xlabels.shape)
+    if verbose: print("========================== end of [parse_ub_particle_points]")    
     return xpos,xlabels
 mlreco.iotools.parser_factory.register_parser( "parse_ub_particle_points", parse_ub_particle_points )
 
@@ -89,19 +91,20 @@ def parse_ub_cropped_sparse3d_me(data):
     data: numpy array(float32) with shape (N,C)
         Pixel values/channels
     """
-    print("[parse_ub_cropped_sparse3d_me] ===================================")
+    verbose = False
+    if verbose: print("[parse_ub_cropped_sparse3d_me] ===================================")
     coord_np = data[0][0].at(0).tonumpy()
     feat_np  = data[1][0].at(0).tonumpy()
     kpvox_np = data[2][0].at(0).tonumpy()
     vtxvox   = data[3][0]
-    print("ub cropped sparsed3d me, nu vertex voxel: ",(vtxvox[0],vtxvox[1],vtxvox[2]))
+    if verbose: print("ub cropped sparsed3d me, nu vertex voxel: ",(vtxvox[0],vtxvox[1],vtxvox[2]))
     
 
     voxlimits = [2400+1008*6,117*2,1036]
     voxlimits[0] = (voxlimits[0]-3200.0)*0.5*0.111 # ticks to cm
     for i in range(3):
         voxlimits[i] = int(voxlimits[i]/0.3+0.5) # the max voxel
-    print("voxlimits: ",voxlimits)
+    if verbose: print("voxlimits: ",voxlimits)
     cropsize = [768,768,768]
 
     # choose a keypoint to crop around
@@ -110,11 +113,11 @@ def parse_ub_cropped_sparse3d_me(data):
     while len(attempts)<npts:
         ikp = np.random.randint( kpvox_np.shape[0] )
         attempts.append(ikp)
-        print("choose ikp=",ikp," of ",kpvox_np.shape[0])
+        if verbose: print("choose ikp=",ikp," of ",kpvox_np.shape[0])
         cropvtx = kpvox_np[ikp,:]
-        print("seed vtx voxel: ",cropvtx," ",cropvtx.shape)
+        if verbose: print("seed vtx voxel: ",cropvtx," ",cropvtx.shape)
         jitter = np.random.randint(-50,51,size=3)
-        print("jitter: ",jitter," ",jitter.shape)
+        if verbose: print("jitter: ",jitter," ",jitter.shape)
         proposedvtx = cropvtx+jitter
         # check the bounds
         for i in range(3):
@@ -122,16 +125,16 @@ def parse_ub_cropped_sparse3d_me(data):
                 proposedvtx[i] = cropsize[i]/2+1
             if proposedvtx[i]+(cropsize[i]/2)+1>=voxlimits[i]:
                 proposedvtx[i] = int(voxlimits[i])-1-int(cropsize[i]/2)
-        print("proposedvtx (post-checks): ",proposedvtx)
+        if verbose: print("proposedvtx (post-checks): ",proposedvtx)
 
         # we have to crop coords and feats
         xcoord = np.copy( coord_np )
         xfeat  = np.copy( feat_np )
-        print("coord_np: ",coord_np.shape)
-        print("feat_np: ",feat_np.shape)
+        if verbose: print("coord_np: ",coord_np.shape)
+        if verbose: print("feat_np: ",feat_np.shape)
         for i in range(3):
             lowpt = int(proposedvtx[i]-int(cropsize[i]/2))
-            print("dim[%d] lowpt=%d"%(i,lowpt))
+            if verbose: print("dim[%d] lowpt=%d"%(i,lowpt))
             xfilter = xcoord[:,i]>=lowpt
             xcoord = xcoord[xfilter[:],:]
             xfeat  = xfeat[xfilter[:],:]
@@ -142,13 +145,13 @@ def parse_ub_cropped_sparse3d_me(data):
 
             xcoord[:,i] -= lowpt
 
-            print("postfilter dim=",i,": ",xcoord.shape," ",xfeat.shape)
+            if verbose: print("postfilter dim=",i,": ",xcoord.shape," ",xfeat.shape)
 
         # check it
         isok = True
         for i in range(3):
-            print("dim[",i,"] min-check: ",xcoord[xcoord<0])
-            print("dim[",i,"] max-check: ",xcoord[xcoord>=cropsize[i]])
+            if verbose: print("dim[",i,"] min-check: ",xcoord[xcoord<0])
+            if verbose: print("dim[",i,"] max-check: ",xcoord[xcoord>=cropsize[i]])
             if np.sum(xcoord<0)>0 or np.sum(xcoord>=cropsize[i])>0:
                 isok = False
 
@@ -156,10 +159,10 @@ def parse_ub_cropped_sparse3d_me(data):
             isok = False
             
         if isok:
-            print("good crop")
+            if verbose: print("good crop")
             break
         else:
-            print("bad crop")
+            if verbose: print("bad crop")
             continue
     
     for i in range(3):
@@ -167,7 +170,7 @@ def parse_ub_cropped_sparse3d_me(data):
     if len(xfeat.shape)==1:
         xfeat = xfeat.reshape( feat_np.shape[0], 1 )
 
-    print("========================== end of [parse_ub_cropped_sparse3d_me]")
+    if verbose: print("========================== end of [parse_ub_cropped_sparse3d_me]")
     return xcoord,xfeat
 mlreco.iotools.parser_factory.register_parser( "parse_ub_cropped_sparse3d_me", parse_ub_cropped_sparse3d_me )
 
@@ -189,23 +192,24 @@ def parse_ub_cropped_segment3d_me(data):
     data: numpy array(float32) with shape (N,C)
         Pixel values/channels
     """
-    print("[parse_ub_cropped_segment3d_me] ===================================")
+    verbose = False
+    if verbose: print("[parse_ub_cropped_segment3d_me] ===================================")
     coord_np = data[0][0].at(0).tonumpy()
     feat_np  = data[1][0].at(0).tonumpy()
     if len(feat_np.shape)==1:
         feat_np = feat_np.reshape( feat_np.shape[0], 1 )
     vtxvox   = data[2][0]
-    print("origin voxel of crop: ",(vtxvox[0],vtxvox[1],vtxvox[2]))
+    if verbose: print("origin voxel of crop: ",(vtxvox[0],vtxvox[1],vtxvox[2]))
     cropsize = [768,768,768]
 
     # crop the coords and feats
     xcoord = np.copy( coord_np )
     xfeat  = np.copy( feat_np )
-    print("coord_np: ",coord_np.shape)
-    print("feat_np: ",feat_np.shape)
+    if verbose: print("coord_np: ",coord_np.shape)
+    if verbose: print("feat_np: ",feat_np.shape)
     for i in range(3):
         lowpt = int(vtxvox[i])
-        print("dim[%d] lowpt=%d"%(i,lowpt))
+        if verbose: print("dim[%d] lowpt=%d"%(i,lowpt))
         xfilter = xcoord[:,i]>=lowpt
         xcoord = xcoord[xfilter[:],:]
         xfeat  = xfeat[xfilter[:]]
@@ -215,7 +219,7 @@ def parse_ub_cropped_segment3d_me(data):
         xfeat  = xfeat[xfilter[:]]
 
         xcoord[:,i] -= lowpt
-        print("postfilter dim=",i,": ",xcoord.shape," ",xfeat.shape)
-    print("========================== end of [parse_ub_cropped_segment3d_me]")
+        if verbose: print("postfilter dim=",i,": ",xcoord.shape," ",xfeat.shape)
+    if verbose: print("========================== end of [parse_ub_cropped_segment3d_me]")
     return xcoord,xfeat
 mlreco.iotools.parser_factory.register_parser( "parse_ub_cropped_segment3d_me", parse_ub_cropped_segment3d_me )
