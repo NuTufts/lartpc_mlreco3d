@@ -2,7 +2,7 @@ import torch
 import numpy as np
 
 from mlreco.models.grappa import GNN, GNNLoss
-from mlreco.utils.deghosting import adapt_labels
+from mlreco.utils.deghosting import adapt_labels_knn as adapt_labels
 from mlreco.utils.gnn.evaluation import (node_assignment_score,
                                          primary_assignment)
 from mlreco.utils.gnn.cluster import (form_clusters,
@@ -11,59 +11,11 @@ from mlreco.utils.gnn.cluster import (form_clusters,
 
 class FullChainGNN(torch.nn.Module):
     """
-    Modular, End-to-end LArTPC Reconstruction Chain
+    GNN section of the full chain.
 
-    - Deghosting for 3D tomographic reconstruction artifiact removal
-    - UResNet for voxel-wise semantic segmentation
-    - PPN for point proposal
-    - DBSCAN/PILOT/SPICE for dense particle clustering
-    - GrapPA(s) for particle aggregation and identification
-    - CNN for interaction classification
-
-    Configuration goes under the ``modules`` section.
-    The full chain-related sections (as opposed to each
-    module-specific configuration) look like this:
-
-    ..  code-block:: yaml
-
-          modules:
-            chain:
-              enable_uresnet: True
-              enable_ppn: True
-              enable_cnn_clust: True
-              enable_gnn_shower: True
-              enable_gnn_track: True
-              enable_gnn_particle: False
-              enable_gnn_inter: True
-              enable_gnn_kinematics: False
-              enable_cosmic: False
-              enable_ghost: True
-              use_ppn_in_gnn: True
-              verbose: True
-
-
-            # full chain loss and weighting
-            full_chain_loss:
-              segmentation_weight: 1.
-              clustering_weight: 1.
-              ppn_weight: 1.
-              particle_gnn_weight: 1.
-              shower_gnn_weight: 1.
-              track_gnn_weight: 1.
-              inter_gnn_weight: 1.
-              kinematics_weight: 1.
-              kinematics_p_weight: 1.
-              kinematics_type_weight: 1.
-              flow_weight: 1.
-              cosmic_weight: 1.
-
-    The ``chain`` section enables or disables specific
-    stages of the full chain. When a module is disabled
-    through this section, it will not even be constructed.
-    The section ``full_chain_loss`` allows
-    to set different weights to the losses of different stages.
-    The configuration blocks for each enabled module should
-    also live under the `modules` section of the configuration.
+    See Also
+    --------
+    mlreco.models.full_chain.FullChain, FullChainLoss
     """
     MODULES = ['grappa_shower', 'grappa_track', 'grappa_inter',
                'grappa_shower_loss', 'grappa_track_loss', 'grappa_inter_loss',
@@ -125,7 +77,6 @@ class FullChainGNN(torch.nn.Module):
         =======
         None (modifies the result dict in place)
         """
-
         # Pass data through the GrapPA model
         gnn_output = grappa(input, clusts, batch_size=self.batch_size, **kwargs)
 
@@ -175,6 +126,7 @@ class FullChainGNN(torch.nn.Module):
                 part_primary_ids.append(primary_id)
             else:
                 part_primary_ids.append(g)
+
 
     def get_all_fragments(self, result, input):
         """
@@ -245,7 +197,8 @@ class FullChainGNN(torch.nn.Module):
                            'node_pred' : 'shower_node_pred',
                            'edge_pred' : 'shower_edge_pred',
                            'edge_index': 'shower_edge_index',
-                           'group_pred': 'shower_group_pred'}
+                           'group_pred': 'shower_group_pred',
+                           'input_node_features': 'shower_node_features'}
             # shower_grappa_input = input
             # if self.use_true_fragments and 'points' not in kwargs:
             #     # Add true particle coords to input
@@ -275,7 +228,8 @@ class FullChainGNN(torch.nn.Module):
                            'node_pred' : 'track_node_pred',
                            'edge_pred' : 'track_edge_pred',
                            'edge_index': 'track_edge_index',
-                           'group_pred': 'track_group_pred'}
+                           'group_pred': 'track_group_pred',
+                           'input_node_features': 'track_node_features'}
 
             self.run_gnn(self.grappa_track,
                          input,
@@ -348,7 +302,6 @@ class FullChainGNN(torch.nn.Module):
                     mask &= (frag_seg != c)
             # Append one particle per shower group
             if self.enable_gnn_shower:
-
                 self.select_particle_in_group(result, counts, b, particles,
                                             part_primary_ids,
                                             'shower_node_pred',
@@ -358,7 +311,6 @@ class FullChainGNN(torch.nn.Module):
                 mask &= (frag_seg != self._shower_id)
             # Append one particle per track group
             if self.enable_gnn_track:
-
                 self.select_particle_in_group(result, counts, b, particles,
                                             part_primary_ids,
                                             'track_node_pred',
@@ -369,7 +321,7 @@ class FullChainGNN(torch.nn.Module):
 
             # Append one particle per fragment that is not already accounted for
             particles.extend(fragments[mask])
-            part_primary_ids.extend(-np.ones(np.sum(mask)))
+            part_primary_ids.extend(-np.ones(np.sum(mask)).astype(int))
 
         same_length = np.all([len(p) == len(particles[0]) for p in particles])
         particles = np.array(particles,
@@ -437,29 +389,6 @@ class FullChainGNN(torch.nn.Module):
                 particles = np.array(particles, dtype=object)
                 part_seg = get_cluster_label(label_clustering[0].int(), particles, column=-1)
                 part_batch_ids = get_cluster_batch(label_clustering[0], particles, batch_index=0)
-
-                #print(result['shower_fragments'][0])
-                #print(result['frags'][0][result['frag_seg'][0] == 0])
-                #print(result['fragments'][0][result['fragments_seg'][0] == 0])
-
-                # part_primary_ids = []
-                # for idx, b in enumerate(part_batch_ids):
-                # #     print(np.count_nonzero(frag_batch_ids == b))
-                # #     print(np.count_nonzero(frag_batch_ids == b) > 0 and part_seg[idx] == 0)
-                # #     print(np.where(cluster_ids[frag_batch_ids == b] == group_ids[frag_batch_ids == b])[0])
-                #     cluster_ids = get_cluster_label(label_clustering[0][particles[idx]], result['frags'][0][result['frag_seg'][0] == 0], column=5)
-                #     group_ids = get_cluster_label(label_clustering[0][particles[idx]], result['frags'][0][result['frag_seg'][0] == 0], column=6)
-                #     frag_batch_ids = get_cluster_batch(label_clustering[0][particles[idx]], result['frags'][0][result['frag_seg'][0] == 0], batch_index=0)
-                #
-                #     for g in np.unique(group_ids):
-                #         if part_seg[idx] == 0:
-                #             prim = np.where(cluster_ids[(frag_batch_ids == b) & (group_ids == g)] == group_ids[(frag_batch_ids == b) & (group_ids == g)])[0]
-                #             if len(prim) > 0:
-                #                 part_primary_ids.append(prim[0])
-                #                 continue
-                #         part_primary_ids.append(-1)
-                # #part_primary_ids = [np.where(cluster_ids[frag_batch_ids == b] == group_ids[frag_batch_ids == b])[0][0] if len(np.where(cluster_ids[frag_batch_ids == b] == group_ids[frag_batch_ids == b])[0]) else -1 for idx, b in enumerate(part_batch_ids)]
-                # assert len(part_primary_ids) == len(particles)
                 _, counts = torch.unique(label_clustering[0][:, 0], return_counts=True)
 
             # For showers, select primary for extra feature extraction
@@ -506,7 +435,9 @@ class FullChainGNN(torch.nn.Module):
                            'node_pred': 'inter_node_pred',
                            'node_pred_type': 'node_pred_type',
                            'node_pred_p': 'node_pred_p',
-                           'node_pred_vtx': 'node_pred_vtx'}
+                           'node_pred_vtx': 'node_pred_vtx',
+                           'input_node_features': 'particle_node_features',
+                           'input_edge_features': 'particle_edge_features'}
 
             self.run_gnn(self.grappa_inter,
                          input,
@@ -524,8 +455,8 @@ class FullChainGNN(torch.nn.Module):
                 raise Exception("Need interaction clustering before kinematic GNN.")
             output_keys = {'clusts': 'kinematics_particles',
                            'edge_index': 'kinematics_edge_index',
-                           'node_pred_p': 'node_pred_p',
-                           'node_pred_type': 'node_pred_type',
+                           'node_pred_p': 'kinematics_node_pred_p',
+                           'node_pred_type': 'kinematics_node_pred_type',
                            'edge_pred': 'flow_edge_pred'}
 
             self.run_gnn(self.grappa_kinematics,
@@ -591,7 +522,7 @@ class FullChainGNN(torch.nn.Module):
             batches, counts = torch.unique(input[0][:, self.batch_col], return_counts=True)
             # In case one of the events is "missing" and len(counts) < batch_size
             if len(counts) < self.batch_size:
-                new_counts = torch.zeros(batch_size, dtype=torch.int64, device=counts.device)
+                new_counts = torch.zeros(self.batch_size, dtype=torch.int64, device=counts.device)
                 new_counts[batches] = counts
                 counts = new_counts
 
@@ -644,6 +575,10 @@ class FullChainGNN(torch.nn.Module):
 class FullChainLoss(torch.nn.modules.loss._Loss):
     """
     Loss for UResNet + PPN chain
+
+    See Also
+    --------
+    mlreco.models.full_chain.FullChainLoss, FullChainGNN
     """
     # INPUT_SCHEMA = [
     #     ["parse_sparse3d_scn", (int,), (3, 1)],
@@ -672,6 +607,7 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
         # Initialize the loss weights
         self.loss_config = cfg.get('full_chain_loss', {})
 
+        self.deghost_weight         = self.loss_config.get('deghost_weight', 1.0)
         self.segmentation_weight    = self.loss_config.get('segmentation_weight', 1.0)
         self.ppn_weight             = self.loss_config.get('ppn_weight', 1.0)
         self.cnn_clust_weight       = self.loss_config.get('cnn_clust_weight', 1.0)
@@ -690,8 +626,20 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
         res = {}
         accuracy, loss = 0., 0.
 
+        if self.enable_charge_rescaling:
+            ghost_label = torch.cat((seg_label[0][:,:4], (seg_label[0][:,-1] == 5).type(seg_label[0].dtype).reshape(-1,1)), dim=-1)
+            res_deghost = self.deghost_loss({'segmentation':out['ghost']}, [ghost_label])
+            for key in res_deghost:
+                res['deghost_' + key] = res_deghost[key]
+            accuracy += res_deghost['accuracy']
+            loss += self.deghost_weight*res_deghost['loss']
+            deghost = (seg_label[0][:,-1] < 5) & (out['ghost'][0][:,0] > out['ghost'][0][:,1]) # Only non-ghost (both true and pred) can go in semseg eval
+
         if self.enable_uresnet:
-            res_seg = self.uresnet_loss(out, seg_label)
+            if not self.enable_charge_rescaling:
+                res_seg = self.uresnet_loss(out, seg_label)
+            else:
+                res_seg = self.uresnet_loss({'segmentation':[out['segmentation'][0][deghost]]}, [seg_label[0][deghost]])
             for key in res_seg:
                 res['uresnet_' + key] = res_seg[key]
             accuracy += res_seg['accuracy']
@@ -859,11 +807,12 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
                     'edge_pred':out['inter_edge_pred'],
                     'edge_index':out['inter_edge_index']
                 }
-
             if 'inter_node_pred' in out: gnn_out.update({ 'node_pred': out['inter_node_pred'] })
             if 'node_pred_type' in out:  gnn_out.update({ 'node_pred_type': out['node_pred_type'] })
             if 'node_pred_p' in out:     gnn_out.update({ 'node_pred_p': out['node_pred_p'] })
             if 'node_pred_vtx' in out:   gnn_out.update({ 'node_pred_vtx': out['node_pred_vtx'] })
+            if 'particle_node_features' in out:   gnn_out.update({ 'input_node_features': out['particle_node_features'] })
+            if 'particle_edge_features' in out:   gnn_out.update({ 'input_edge_features': out['particle_edge_features'] })
 
             res_gnn_inter = self.inter_gnn_loss(gnn_out, cluster_label, node_label=kinematics_label, graph=particle_graph, iteration=iteration)
             for key in res_gnn_inter:
@@ -914,7 +863,7 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
             loss += self.cosmic_weight * res_cosmic['loss']
 
         # Combine the results
-        accuracy /= int(self.enable_uresnet) + int(self.enable_ppn) + int(self.enable_gnn_shower) \
+        accuracy /= int(self.enable_charge_rescaling) + int(self.enable_uresnet) + int(self.enable_ppn) + int(self.enable_gnn_shower) \
                     + int(self.enable_gnn_inter) + int(self.enable_gnn_track) + int(self.enable_cnn_clust) \
                     + 2*int(self.enable_gnn_kinematics) + int(self.enable_cosmic) + int(self.enable_gnn_particle)
 
@@ -923,6 +872,8 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
         #print('Loss = ', res['loss'])
 
         if self.verbose:
+            if self.enable_charge_rescaling:
+                print('Deghosting Accuracy: {:.4f}'.format(res_deghost['accuracy']))
             if self.enable_uresnet:
                 print('Segmentation Accuracy: {:.4f}'.format(res_seg['accuracy']))
             if self.enable_ppn:
@@ -972,6 +923,10 @@ def setup_chain_cfg(self, cfg):
     Prepare both FullChain and FullChainLoss
 
     Make sure config is logically sound with some basic checks
+
+    See Also
+    --------
+    mlreco.models.full_chain.FullChain, FullChainGNN
     """
     chain_cfg = cfg.get('chain', {})
 
@@ -985,6 +940,7 @@ def setup_chain_cfg(self, cfg):
     self.use_true_particles    = chain_cfg.get('use_true_particles', False)
     self._gspice_use_true_labels      = cfg.get('graph_spice', {}).get('use_true_labels', False)
 
+    self.enable_charge_rescaling = chain_cfg.get('enable_charge_rescaling', False)
     self.enable_ghost          = chain_cfg.get('enable_ghost', False)
     self.cheat_ghost           = chain_cfg.get('cheat_ghost', False)
     self.verbose               = chain_cfg.get('verbose', False)
@@ -1000,18 +956,27 @@ def setup_chain_cfg(self, cfg):
     self.enable_gnn_kinematics = chain_cfg.get('enable_gnn_kinematics', False)
     self.enable_cosmic         = chain_cfg.get('enable_cosmic', False)
 
+    if self.verbose:
+        print("Shower GNN: {}".format(self.enable_gnn_shower))
+        print("Track GNN: {}".format(self.enable_gnn_track))
+        print("Particle GNN: {}".format(self.enable_gnn_particle))
+        print("Interaction GNN: {}".format(self.enable_gnn_inter))
+        print("Kinematics GNN: {}".format(self.enable_gnn_kinematics))
+        print("Cosmic GNN: {}".format(self.enable_cosmic))
+
     if (self.enable_gnn_shower or \
         self.enable_gnn_track or \
         self.enable_gnn_particle or \
         self.enable_gnn_inter or \
         self.enable_gnn_kinematics or self.enable_cosmic):
-        msg = """
-        Since one of the GNNs are turned on, process_fragments is turned ON.
-        """
-        print(msg)
+        if self.verbose:
+            msg = """
+            Since one of the GNNs are turned on, process_fragments is turned ON.
+            """
+            print(msg)
         self.process_fragments = True
 
-    if self.process_fragments:
+    if self.process_fragments and self.verbose:
         msg = """
         Fragment processing is turned ON. When training CNN models from
          scratch, we recommend turning fragment processing OFF as without
@@ -1034,7 +999,7 @@ def setup_chain_cfg(self, cfg):
     self.use_supp_in_gnn    = chain_cfg.get('use_supp_in_gnn', True)
 
     # Make sure the deghosting config is consistent
-    if self.enable_ghost:
+    if self.enable_ghost and not self.enable_charge_rescaling:
         assert cfg['uresnet_ppn']['uresnet_lonely']['ghost']
         if self.enable_ppn:
             assert cfg['uresnet_ppn']['ppn']['ghost']

@@ -53,7 +53,7 @@ class SparseResidualEncoder(UResNetEncoder):
                 ME.MinkowskiGlobalPooling())
         elif self.pool_mode == 'max':
             self.pool = nn.Sequential(
-                ME.MinkowskiMaxPooling(final_tensor_shape, stride=final_tensor_shape),
+                ME.MinkowskiMaxPooling(final_tensor_shape, stride=final_tensor_shape, dimension=self.D),
                 ME.MinkowskiGlobalPooling())
         else:
             raise NotImplementedError
@@ -70,7 +70,7 @@ class SparseResidualEncoder(UResNetEncoder):
             features = torch.cat([normalized_coords, features], dim=1)
 
         x = ME.SparseTensor(coordinates=input_tensor[:, :4].int(),
-                            features=features)
+                            features=features.float())
         # Encoder
         encoderOutput = self.encoder(x)
         encoderTensors = encoderOutput['encoderTensors']

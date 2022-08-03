@@ -39,8 +39,11 @@ def list_concat(data_blob, outputs, avoid_keys=[]):
 
     return result_data, result_outputs
 
+
 def unwrap_2d_scn(data_blob, outputs, avoid_keys=[]):
     """
+    For 2D data in SCN format
+
     See unwrap_scn
     """
     return unwrap_scn(data_blob, outputs, 2, avoid_keys)
@@ -48,6 +51,8 @@ def unwrap_2d_scn(data_blob, outputs, avoid_keys=[]):
 
 def unwrap_3d_scn(data_blob, outputs, avoid_keys=[]):
     """
+    For 3D data in SCN format
+
     See unwrap_scn
     """
     return unwrap_scn(data_blob, outputs, 3, avoid_keys)
@@ -55,20 +60,13 @@ def unwrap_3d_scn(data_blob, outputs, avoid_keys=[]):
 
 def unwrap_3d_mink(data_blob, outputs, avoid_keys=[]):
     """
-    See unwrap_scn
+    Adapted for MinkowskiEngine (batch id column is 0)
     """
     return unwrap_scn(data_blob, outputs, 0, avoid_keys)
 
 
-
-def unwrap_mink(data_blob, outputs, batch_id_col, avoid_keys):
-    """
-    Break down the data_blob and outputs dictionary into events
-    for MinkowskiEngine formatted tensors.
-
-    Function behavior is same as that of unwrap_scn.
-    """
-    pass
+def unwrap(*args, **kwargs):
+    return unwrap_3d_mink(*args, **kwargs)
 
 
 def unwrap_scn(data_blob, outputs, batch_id_col, avoid_keys):
@@ -156,9 +154,13 @@ def unwrap_scn(data_blob, outputs, batch_id_col, avoid_keys):
     # b-0) Find the target keys
     target_array_keys = []
     target_list_keys  = []
+    # print(len(result_outputs['points']))
     for key, data in outputs.items():
         if key in avoid_keys:
-            result_outputs[key] = data
+            if not isinstance(data, list):
+                result_outputs[key] = [data]    # Temporary Fix
+            else:
+                result_outputs[key] = data
             continue
         if not key in result_outputs: result_outputs[key]=[]
         if not isinstance(data,list): result_outputs[key].append(data)
@@ -230,7 +232,6 @@ def unwrap_scn(data_blob, outputs, batch_id_col, avoid_keys):
     # ensure outputs[key] length is same for all key in target_list_keys
     # for target in target_list_keys:
     #     print(target,len(outputs[target]))
-
     num_elements = np.unique([len(outputs[target]) for target in target_list_keys])
     assert len(num_elements)<1 or len(num_elements) == 1
     num_elements = 0 if len(num_elements) < 1 else int(num_elements[0])
@@ -247,11 +248,13 @@ def unwrap_scn(data_blob, outputs, batch_id_col, avoid_keys):
                 if not d.shape[0] in element_map:
                     if len(d.shape) < 2:
                         print(target, d.shape)
-
                     batch_id_loc = batch_id_col if d.shape[1] > batch_id_col else -1
                     batch_idx = np.unique(d[:,batch_id_loc])
                     batch_ctrs.append(int(np.max(batch_idx)+1))
-                    assert(len(batch_idx) == len(np.unique(batch_idx.astype(np.int32))))
+                    try:
+                        assert(len(batch_idx) == len(np.unique(batch_idx.astype(np.int32))))
+                    except AssertionError:
+                        raise AssertionError("Result key {} is not included in concat_result".format(target))
                     where = [d[:,batch_id_loc] == b for b in range(batch_ctrs[-1])]
                     element_map[d.shape[0]] = where
         # print(batch_ctrs)
@@ -262,7 +265,6 @@ def unwrap_scn(data_blob, outputs, batch_id_col, avoid_keys):
         # assert len(np.unique(batch_ctrs)) == 1
         list_unwrap_map.append(element_map)
         list_batch_ctrs.append(min(batch_ctrs))
-
     for target in target_list_keys:
         data = outputs[target]
         for data_index, dlist in enumerate(data):
@@ -270,5 +272,4 @@ def unwrap_scn(data_blob, outputs, batch_id_col, avoid_keys):
             element_map = list_unwrap_map[data_index]
             for b in range(batch_ctrs):
                 result_outputs[target].append([ d[element_map[d.shape[0]][b]] for d in dlist])
-
     return result_data, result_outputs

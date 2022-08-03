@@ -8,15 +8,60 @@ from mlreco.models.uresnet import UResNet_Chain, SegmentationLoss
 from mlreco.models.graph_spice import MinkGraphSPICE, GraphSPICELoss
 
 from mlreco.utils.cluster.cluster_graph_constructor import ClusterGraphConstructor
-from mlreco.utils.deghosting import adapt_labels
-from mlreco.utils.cluster.fragmenter import DBSCANFragmentManager, GraphSPICEFragmentManager, format_fragments
+from mlreco.utils.deghosting import adapt_labels_knn as adapt_labels
+from mlreco.utils.cluster.fragmenter import (DBSCANFragmentManager,
+                                             GraphSPICEFragmentManager,
+                                             format_fragments)
+from mlreco.utils.ppn import get_track_endpoints_geo
+from mlreco.utils.gnn.data import _get_extra_gnn_features
 from mlreco.models.layers.common.cnn_encoder import SparseResidualEncoder
+
 
 class FullChain(FullChainGNN):
     '''
     Full Chain with MinkowskiEngine implementations for CNNs.
 
-    See FullChain class for general description.
+    Modular, End-to-end LArTPC Reconstruction Chain
+
+    - Deghosting for 3D tomographic reconstruction artifiact removal
+    - UResNet for voxel-wise semantic segmentation
+    - PPN for point proposal
+    - DBSCAN/GraphSPICE for dense particle clustering
+    - GrapPA(s) for particle/interaction aggregation and identification
+
+    Configuration goes under the ``modules`` section.
+    The full chain-related sections (as opposed to each
+    module-specific configuration) look like this:
+
+    ..  code-block:: yaml
+
+          modules:
+            chain:
+              enable_uresnet: True
+              enable_ppn: True
+              enable_cnn_clust: True
+              enable_gnn_shower: True
+              enable_gnn_track: True
+              enable_gnn_particle: False
+              enable_gnn_inter: True
+              enable_gnn_kinematics: False
+              enable_cosmic: False
+              enable_ghost: True
+              use_ppn_in_gnn: True
+              verbose: True
+
+    The ``chain`` section enables or disables specific
+    stages of the full chain. When a module is disabled
+    through this section, it will not even be constructed.
+    The configuration blocks for each enabled module should
+    also live under the `modules` section of the configuration.
+
+    To see an example of full chain configuration, head over to
+    https://github.com/DeepLearnPhysics/lartpc_mlreco3d_tutorials/blob/master/book/data/inference.cfg
+
+    See Also
+    --------
+    mlreco.models.layers.common.gnn_full_chain.FullChainGNN, FullChainLoss
     '''
     MODULES = ['grappa_shower', 'grappa_track', 'grappa_inter',
                'grappa_shower_loss', 'grappa_track_loss', 'grappa_inter_loss',
@@ -26,6 +71,12 @@ class FullChain(FullChainGNN):
 
     def __init__(self, cfg):
         super(FullChain, self).__init__(cfg)
+
+        # Initialize the charge rescaling module
+        if self.enable_charge_rescaling:
+            self.uresnet_deghost = UResNet_Chain(cfg.get('uresnet_deghost', {}),
+                                                 name='uresnet_lonely')
+            self.deghost_input_features = self.uresnet_deghost.net.num_input
 
         # Initialize the UResNet+PPN modules
         self.input_features = 1
@@ -70,8 +121,8 @@ class FullChain(FullChainGNN):
         # print('Total Number of Trainable Parameters (mink_full_chain)= {}'.format(
         #             sum(p.numel() for p in self.parameters() if p.requires_grad)))
 
-    def get_extra_gnn_features(self,
-                               fragments,
+    @staticmethod
+    def get_extra_gnn_features(fragments,
                                frag_seg,
                                classes,
                                input,
@@ -104,68 +155,13 @@ class FullChain(FullChainGNN):
             Keys can include `points` (if `use_ppn` is `True`)
             and `extra_feats` (if `use_supp` is True).
         """
-        # Build a mask for the requested classes
-        mask = np.zeros(len(frag_seg), dtype=np.bool)
-        for c in classes:
-            mask |= (frag_seg == c)
-        mask = np.where(mask)[0]
-
-        #print("INPUT = ", input)
-
-        # If requested, extract PPN-related features
-        kwargs = {}
-        if use_ppn:
-            ppn_points = torch.empty((0,6), device=input[0].device,
-                                            dtype=torch.double)
-            points_tensor = result['points'][0].detach().double()
-            for i, f in enumerate(fragments[mask]):
-                if frag_seg[mask][i] == 1:
-                    dist_mat = torch.cdist(input[0][f,1:4], input[0][f,1:4])
-                    idx = torch.argmax(dist_mat)
-                    idxs = int(idx)//len(f), int(idx)%len(f)
-                    scores = torch.sigmoid(points_tensor[f, -1])
-                    correction0 = points_tensor[f][idxs[0], :3] + \
-                                  0.5 if scores[idxs[0]] > 0.5 else 0.0
-                    correction1 = points_tensor[f][idxs[1], :3] + \
-                                  0.5 if scores[idxs[1]] > 0.5 else 0.0
-                    end_points = torch.cat([input[0][f[idxs[0]],1:4] + correction0,
-                                            input[0][f[idxs[1]],1:4] + correction1]).reshape(1,-1)
-                    ppn_points = torch.cat((ppn_points, end_points), dim=0)
-                else:
-                    dmask  = torch.nonzero(torch.max(
-                        torch.abs(points_tensor[f,:3]), dim=1).values < 1.,
-                        as_tuple=True)[0]
-                    # scores = torch.sigmoid(points_tensor[f, -1])
-                    # argmax = dmask[torch.argmax(scores[dmask])] \
-                    #          if len(dmask) else torch.argmax(scores)
-                    scores = torch.softmax(points_tensor[f, -2:], dim=1)
-                    argmax = dmask[torch.argmax(scores[dmask, -1])] \
-                             if len(dmask) else torch.argmax(scores[:, -1])
-                    start  = input[0][f][argmax,1:4] + \
-                             points_tensor[f][argmax,:3] + 0.5
-                    ppn_points = torch.cat((ppn_points,
-                        torch.cat([start, start]).reshape(1,-1)), dim=0)
-
-            kwargs['points'] = ppn_points
-
-        # If requested, add energy and semantic related features
-        if use_supp:
-            supp_feats = torch.empty((0,3), device=input[0].device,
-                                            dtype=torch.float)
-            for i, f in enumerate(fragments[mask]):
-                values = torch.cat((input[0][f,4].mean().reshape(1),
-                                    input[0][f,4].std().reshape(1))).float()
-                if torch.isnan(values[1]): # Handle size-1 particles
-                    values[1] = input[0][f,4] - input[0][f,4]
-                sem_type = torch.tensor([frag_seg[mask][i]],
-                                        dtype=torch.float,
-                                        device=input[0].device)
-                supp_feats = torch.cat((supp_feats,
-                    torch.cat([values, sem_type.reshape(1)]).reshape(1,-1)), dim=0)
-
-            kwargs['extra_feats'] = supp_feats
-
-        return mask, kwargs
+        return _get_extra_gnn_features(fragments,
+                                       frag_seg,
+                                       classes,
+                                       input,
+                                       result,
+                                       use_ppn=use_ppn,
+                                       use_supp=use_supp)
 
 
     def full_chain_cnn(self, input):
@@ -203,12 +199,36 @@ class FullChain(FullChainGNN):
 
         result = {}
 
+        if self.enable_charge_rescaling:
+            # Pass through the deghosting
+            assert self.enable_ghost
+            last_index = 4 + self.deghost_input_features
+            result.update(self.uresnet_deghost([input[0][:,:last_index]]))
+            result['ghost'] = result['segmentation']
+            deghost = result['ghost'][0].argmax(dim=1) == 0
+
+            # Rescale the charge column
+            hit_charges  = input[0][deghost, last_index  :last_index+3]
+            hit_ids      = input[0][deghost, last_index+3:last_index+6]
+            multiplicity = torch.empty(hit_charges.shape, dtype=torch.long, device=hit_charges.device)
+            for b in batches:
+                batch_mask = input[0][deghost,self.batch_col] == b
+                _, inverse, counts = torch.unique(hit_ids[batch_mask], return_inverse=True, return_counts=True)
+                multiplicity[batch_mask] = counts[inverse].reshape(-1,3)
+            charges = torch.sum(hit_charges/multiplicity, dim=1)/3 # 3 planes, take average estimate
+            input[0][deghost, 4] = charges
+
         if self.enable_uresnet:
-            result = self.uresnet_lonely([input[0][:,:4+self.input_features]])
+            if self.enable_charge_rescaling:
+                assert not self.uresnet_lonely.ghost
+                result.update(self.uresnet_lonely([input[0][deghost, :4+self.input_features]]))
+            else:
+                result.update(self.uresnet_lonely([input[0][:, :4+self.input_features]]))
+
         if self.enable_ppn:
             ppn_input = {}
             ppn_input.update(result)
-            if 'ghost' in ppn_input:
+            if 'ghost' in ppn_input and not self.enable_charge_rescaling:
                 ppn_input['ghost'] = ppn_input['ghost'][0]
                 ppn_output = self.ppn(ppn_input['finalTensor'][0],
                                       ppn_input['decoderTensors'][0],
@@ -217,6 +237,18 @@ class FullChain(FullChainGNN):
                 ppn_output = self.ppn(ppn_input['finalTensor'][0],
                                       ppn_input['decoderTensors'][0])
             result.update(ppn_output)
+
+        if self.enable_charge_rescaling:
+            # Reshape output tensors of UResNet and PPN to be of the original shape
+            for key in ['segmentation', 'points', 'classify_endpoints', 'mask_ppn', 'ppn_coords', 'ppn_layers']:
+                res = result[key][0] if isinstance(result[key][0], torch.Tensor) else result[key][0][-1]
+                tensor = torch.zeros((input[0].shape[0], res.shape[1]), dtype=res.dtype, device=res.device)
+                tensor[deghost] = res
+                if isinstance(result[key][0], torch.Tensor):
+                    result[key][0]     = tensor
+                else:
+                    result[key][0][-1] = tensor
+            result['ppn_output_coordinates'][0] = input[0][:,:4].type(result['ppn_output_coordinates'][0].dtype)
 
         # The rest of the chain only needs 1 input feature
         if self.input_features > 1:
@@ -299,17 +331,17 @@ class FullChain(FullChainGNN):
 
             # If there are voxels to process in the given semantic classes
             if torch.count_nonzero(filtered_semantic) > 0:
-                if label_clustering is not None and self.training:
-                    # If we are training, need cluster labels to define edge truth.
+                if label_clustering is not None:
+                    # If labels are present, compute loss and accuracy
                     graph_spice_label = torch.cat((label_clustering[0][:, :-1],
-                                                   semantic_labels.reshape(-1,1)), dim=1)
+                                                    semantic_labels.reshape(-1,1)), dim=1)
                 else:
-                    # Otherwise semantic predictions is enough.
+                #     # Otherwise run in data inference mode (will not compute loss and accuracy)
                     graph_spice_label = torch.cat((input[0][:, :4],
                                                     semantic_labels.reshape(-1, 1)), dim=1)
                 cnn_result['graph_spice_label'] = [graph_spice_label]
                 spatial_embeddings_output = self.graph_spice((input[0][:,:5],
-                                                                     graph_spice_label))
+                                                              graph_spice_label))
                 cnn_result.update(spatial_embeddings_output)
 
 
@@ -317,7 +349,7 @@ class FullChain(FullChainGNN):
                     self.gs_manager.replace_state(spatial_embeddings_output['graph'][0],
                                                   spatial_embeddings_output['graph_info'][0])
 
-                    self.gs_manager.fit_predict(gen_numpy_graph=True, invert=self._gspice_invert, min_points=self._gspice_min_points)
+                    self.gs_manager.fit_predict(invert=self._gspice_invert, min_points=self._gspice_min_points)
                     cluster_predictions = self.gs_manager._node_pred.x
                     filtered_input = torch.cat([input[0][filtered_semantic][:, :4],
                                                 semantic_labels[filtered_semantic][:, None],
@@ -334,6 +366,8 @@ class FullChain(FullChainGNN):
 
         if self.enable_dbscan and self.process_fragments:
             # Get the fragment predictions from the DBSCAN fragmenter
+            # print('Input = ', input[0].shape)
+            # print('points = ', cnn_result['points'][0].shape)
             fragment_data = self.dbscan_fragment_manager(input[0], cnn_result)
             cluster_result['fragments'].extend(fragment_data[0])
             cluster_result['frag_batch_ids'].extend(fragment_data[1])
@@ -368,11 +402,20 @@ class FullChain(FullChainGNN):
 
 
 class FullChainLoss(FullChainLoss):
+    """
+    Loss function for the full chain.
+
+    See Also
+    --------
+    FullChain, mlreco.models.layers.common.gnn_full_chain.FullChainLoss
+    """
 
     def __init__(self, cfg):
         super(FullChainLoss, self).__init__(cfg)
 
         # Initialize loss components
+        if self.enable_charge_rescaling:
+            self.deghost_loss            = SegmentationLoss(cfg.get('uresnet_deghost', {}), batch_col=self.batch_col)
         if self.enable_uresnet:
             self.uresnet_loss            = SegmentationLoss(cfg.get('uresnet_ppn', {}), batch_col=self.batch_col)
         if self.enable_ppn:

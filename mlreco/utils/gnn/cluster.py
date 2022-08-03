@@ -42,7 +42,6 @@ def _form_clusters(data: nb.float64[:,:],
         mask = np.arange(len(data), dtype=np.int64)
 
     subdata = data[mask]
-
     # Loop over batches and cluster IDs, append cluster voxel lists
     clusts = []
     for b in np.unique(subdata[:, batch_index]):
@@ -125,16 +124,21 @@ def get_cluster_label(data, clusts, column=5):
         data (np.ndarray)    : (N,8) [x, y, z, batchid, value, id, groupid, shape]
         clusts ([np.ndarray]): (C) List of arrays of voxel IDs in each cluster
         column (int)         : Column which specifies the cluster ID
+        dtype (dtype)
     Returns:
         np.ndarray: (C) List of cluster IDs
     """
+    dtype = data[:, column].dtype
     if len(clusts) > 0:
-        return _get_cluster_label(data, clusts, column)
+        if dtype == np.int64:
+            return _get_cluster_label_int(data, clusts, column)
+        else:
+            return _get_cluster_label_float(data, clusts, column)
     else:
         return np.empty((0,), dtype=np.int32)
 
 @nb.njit(cache=True)
-def _get_cluster_label(data: nb.float64[:,:],
+def _get_cluster_label_int(data: nb.float64[:,:],
                        clusts: nb.types.List(nb.int64[:]),
                        column: nb.int64 = 5) -> nb.int64[:]:
 
@@ -144,6 +148,16 @@ def _get_cluster_label(data: nb.float64[:,:],
         labels[i] = v[np.argmax(np.array(cts))]
     return labels
 
+@nb.njit(cache=True)
+def _get_cluster_label_float(data: nb.float64[:,:],
+                       clusts: nb.types.List(nb.int64[:]),
+                       column: nb.int64 = 5) -> nb.float64[:]:
+
+    labels = np.empty(len(clusts), dtype=np.float64)
+    for i, c in enumerate(clusts):
+        v, cts = unique_nb(data[c, column])
+        labels[i] = v[np.argmax(np.array(cts))]
+    return labels
 
 @numba_wrapper(cast_args=['data'], list_args=['clusts'], keep_torch=True, ref_arg='data')
 def get_momenta_label(data, clusts, column=8):
@@ -459,6 +473,38 @@ def _get_cluster_directions(data: nb.float64[:,:],
     return dirs
 
 
+@numba_wrapper(cast_args=['data','values','starts'], list_args=['clusts'], keep_torch=True, ref_arg='data')
+def get_cluster_dedxs(data, values, starts, clusts, max_dist=-1):
+    """
+    Finds the start dEdxs of all the clusters.
+
+    Args:
+        data (torch.tensor)  : (N,3) Voxel coordinates [x, y, z]
+        values (torch.tensor): (N) Voxel values
+        starts (torch.tensor): (C,3) Coordinates of the start points
+        clusts ([np.ndarray]): (C) List of arrays of voxel IDs in each cluster
+        max_dist (float)     : Max distance between start voxel and other voxels
+    Returns:
+        torch.tensor: (N) dEdx values for each cluster
+    """
+    return _get_cluster_dedxs(data, values, starts, clusts, max_dist)
+
+@nb.njit(parallel=True)
+def _get_cluster_dedxs(data: nb.float64[:,:],
+                       values: nb.float64[:],
+                       starts: nb.float64[:,:],
+                       clusts: nb.types.List(nb.int64[:]),
+                       max_dist: nb.float64 = -1) -> nb.float64[:,:]:
+
+    dedxs = np.empty(len(clusts), data.dtype)
+    ids   = np.arange(len(clusts)).astype(np.int64)
+    for k in nb.prange(len(clusts)):
+        # Weird bug here: without the cast (astype), throws a strange noncontiguous error on reshape...
+        dedxs[k] = cluster_dedx(data[clusts[ids[k]],:3], values[clusts[ids[k]]], starts[k].astype(np.float64), max_dist)
+
+    return dedxs
+
+
 @nb.njit(cache=True)
 def cluster_end_points(voxels: nb.float64[:,:]) -> (nb.float64[:], nb.float64[:]):
     """
@@ -603,3 +649,32 @@ def principal_axis(voxels:nb.float64[:,:]) -> nb.float64[:]:
     # Get eigenvectors, select the one which corresponds to the maximal spread
     _, v = np.linalg.eigh(A)
     return v[:,2]
+
+
+@nb.njit
+def cluster_dedx(voxels: nb.float64[:,:],
+                 values: nb.float64[:],
+                 start: nb.float64[:],
+                 max_dist: nb.float64 = 5) -> nb.float64[:]:
+    """
+    Estimates the initial dEdx of a cluster
+
+    Args:
+        voxels (torch.tensor): (N,4) Voxel coordinates [x, y, z]
+        values (torch.tensor): (N) Voxel values
+        starts (torch.tensor): (C,3) Coordinates of the start points
+        max_dist (float)     : Max distance between start voxel and other voxels
+    Returns:
+        torch.tensor: (3) Orientation
+    """
+    # If max_dist is set, limit the set of voxels to those within a sphere of radius max_dist
+    dist_mat = cdist_nb(start.reshape(1,-1), voxels).flatten()
+    if max_dist > 0:
+        voxels = voxels[dist_mat <= max_dist]
+        if len(voxels) < 2:
+            return 0.
+        values = values[dist_mat <= max_dist]
+        dist_mat = dist_mat[dist_mat <= max_dist]
+
+    # Compute the total energy in the neighborhood and the max distance, return ratio
+    return np.sum(values)/np.max(dist_mat)

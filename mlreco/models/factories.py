@@ -1,7 +1,13 @@
 import torch
 
 def model_dict():
+    """
+    Returns dictionary of model classes using name keys (strings).
 
+    Returns
+    -------
+    dict
+    """
     from . import grappa
 
     from . import uresnet
@@ -12,6 +18,7 @@ def model_dict():
     from . import bayes_uresnet
 
     from . import full_chain
+    from . import vertex
 
     # Make some models available (not all of them, e.g. PPN is not standalone)
     models = {
@@ -35,19 +42,33 @@ def model_dict():
         "bayes_singlep": (singlep.BayesianParticleClassifier, singlep.ParticleTypeLoss),
         # Bayesian UResNet
         "bayesian_uresnet": (bayes_uresnet.BayesianUResNet, bayes_uresnet.SegmentationLoss),
+        # DUQ UResNet
+        "duq_uresnet": (bayes_uresnet.DUQUResNet, bayes_uresnet.DUQSegmentationLoss),
         # Evidential Classifier
         'evidential_singlep': (singlep.EvidentialParticleClassifier, singlep.EvidentialLearningLoss),
         # Evidential Classifier with Dropout
         'evidential_dropout_singlep': (singlep.BayesianParticleClassifier, singlep.EvidentialLearningLoss),
         # Deep Single Pass Uncertainty Quantification
         'duq_singlep': (singlep.DUQParticleClassifier, singlep.MultiLabelCrossEntropy),
-        # Single Particle VGG
-        "single_particle_vgg": (singlep.SingleParticleVGG, singlep.ParticleTypeLoss)
+        # Vertex PPN
+        'vertex_ppn': (vertex.VertexPPNChain, vertex.UResNetVertexLoss)
     }
     return models
 
 
 def construct(name):
+    """
+    Returns an instance of a model class based on its name key (string).
+
+    Parameters
+    ----------
+    name: str
+        Key for the model. See source code for list of available models.
+
+    Returns
+    -------
+    object
+    """
     models = model_dict()
     if name not in models:
         raise Exception("Unknown model name provided: %s" % name)

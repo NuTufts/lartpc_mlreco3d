@@ -44,6 +44,7 @@ class WeightedEdgeLoss(nn.Module):
         #     num_edges = y.shape[0]
         #     w = 1.0 / (1.0 - float(num_pos) / num_edges)
         #     weight[~y.bool()] = w
+        # print(logits.shape, logits.max())
         loss = self.loss_fn(logits, y.float(), weight=weight)
         return loss
 
@@ -372,7 +373,9 @@ class NodeEdgeHybridLoss(torch.nn.modules.loss._Loss):
         self.edge_loss_cfg = self.loss_config.get('edge_loss_cfg', {})
         self.invert = cfg.get('invert', True)
         self.edge_loss = WeightedEdgeLoss(invert=self.invert, **self.edge_loss_cfg)
-        self.is_eval = cfg['eval']
+        # self.is_eval = cfg['eval']
+        self.acc_fn = IoUScore()
+        self.use_cluster_labels = cfg.get('use_cluster_labels', True)
 
     def forward(self, result, segment_label, cluster_label):
 
@@ -381,41 +384,26 @@ class NodeEdgeHybridLoss(torch.nn.modules.loss._Loss):
         res = self.loss_fn(result, segment_label, group_label)
         # print(result)
         edge_score = result['edge_score'][0].squeeze()
+        x = edge_score.squeeze()
+        pred = x >= 0
 
-        if not self.is_eval:
+        iou, edge_loss = 0, 0
+
+        if self.use_cluster_labels:
             edge_truth = result['edge_truth'][0]
             edge_loss = self.edge_loss(edge_score.squeeze(), edge_truth.float())
             edge_loss = edge_loss.mean()
 
-            x = edge_score.squeeze()
-            y = edge_truth
-
             if self.invert:
-                pred = x < 0
-            else:
-                pred = x >= 0
+                edge_truth = torch.logical_not(edge_truth.long())
 
-            false_positives_index = pred & (y < 0.5)
+            iou = self.acc_fn(pred, edge_truth)
+        # iou2 = self.acc_fn(~pred, ~edge_truth)
 
-            false_positives = float(torch.sum(pred & (y < 0.5)))
-            false_negatives = float(torch.sum(~pred & (y > 0.5)))
-            true_positives = float(torch.sum(pred & (y > 0.5)))
-            true_negatives = float(torch.sum(~pred & (y < 0.5)))
-
-            tpr = true_positives / (true_positives + false_negatives)
-            tnr = true_negatives / (true_positives + false_positives)
-            fpr = 1 - tnr
-
-            balanced_accuracy = (tpr + tnr) / 2
-
-            # print('TPR = ', tpr)
-            # print('TNR = ', tnr)
-            # print('Balanced Accuracy = ', balanced_accuracy)
-            # print('False Positive Rate = ', fpr)
-            res['edge_accuracy'] = balanced_accuracy
+        res['edge_accuracy'] = iou
+        if 'loss' in res:
+            res['loss'] += edge_loss
         else:
-            edge_loss = 0
-
-        res['loss'] += edge_loss
+            res['loss'] = edge_loss
         res['edge_loss'] = float(edge_loss)
         return res

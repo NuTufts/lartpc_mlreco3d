@@ -8,8 +8,64 @@ from mlreco.models.layers.common.uresnet_layers import UResNet
 from collections import defaultdict
 from mlreco.models.layers.common.activation_normalization_factories import activations_construct, normalizations_construct
 
-class UResNet_Chain(nn.Module):
 
+class UResNet_Chain(nn.Module):
+    """
+    UResNet implementation. Typical configuration should look like:
+
+    .. code-block:: yaml
+
+        model:
+          name: uresnet
+          modules:
+            uresnet_lonely:
+              # Your config here
+
+    Configuration
+    -------------
+    data_dim: int, default 3
+    num_input: int, default 1
+    allow_bias: bool, default False
+    spatial_size: int, default 512
+    leakiness: float, default 0.33
+    activation: dict
+        For activation function, defaults to `{'name': 'lrelu', 'args': {}}`
+    norm_layer: dict
+        For normalization function, defaults to `{'name': 'batch_norm', 'args': {}}`
+
+    depth : int, default 5
+        Depth of UResNet, also corresponds to how many times we down/upsample.
+    filters : int, default 16
+        Number of filters in the first convolution of UResNet.
+        Will increase linearly with depth.
+    reps : int, default 2
+        Convolution block repetition factor
+    input_kernel : int, default 3
+        Receptive field size for very first convolution after input layer.
+
+    num_classes: int, default 5
+    ghost: bool, default False
+    ghost_label: int, default -1
+    weight_loss: bool, default False
+        Whether to weight the loss using class counts.
+    alpha: float, default 1.0
+        Weight for UResNet semantic segmentation loss.
+    beta: float, default 1.0
+        Weight for ghost/non-ghost segmentation loss.
+
+    Output
+    ------
+    segmentation: torch.Tensor
+    finalTensor: torch.Tensor
+    encoderTensors: list of torch.Tensor
+    decoderTensors: list of torch.Tensor
+    ghost: torch.Tensor
+    ghost_sptensor: torch.Tensor
+
+    See Also
+    --------
+    SegmentationLoss, mlreco.models.layers.common.uresnet_layers
+    """
 
     INPUT_SCHEMA = [
         ["parse_sparse3d_scn", (float,), (3, 1)]
@@ -64,54 +120,6 @@ class UResNet_Chain(nn.Module):
         return out
 
 
-# class SegmentationLoss(nn.Module):
-#
-#     def __init__(self, cfg, name='segmentation_loss'):
-#         super(SegmentationLoss, self).__init__()
-#         self.cross_entropy = nn.CrossEntropyLoss(reduction='none')
-#
-#     def forward(self, outputs, label, weight=None):
-#         '''
-#         segmentation[0], label and weight are lists of size #gpus = batch_size.
-#         segmentation has as many elements as UResNet returns.
-#         label[0] has shape (N, dim + batch_id + 1)
-#         where N is #pts across minibatch_size events.
-#         '''
-#         # TODO Add weighting
-#         segmentation = outputs['segmentation']
-#
-#         assert len(segmentation) == len(label)
-#         # if weight is not None:
-#         #     assert len(data) == len(weight)
-#         batch_ids = [d[:, 0] for d in label]
-#         total_loss = 0
-#         total_acc = 0
-#         count = 0
-#         # Loop over GPUS
-#         for i in range(len(segmentation)):
-#             for b in batch_ids[i].unique():
-#                 batch_index = batch_ids[i] == b
-#                 event_segmentation = segmentation[i][batch_index]
-#                 event_label = label[i][:, -1][batch_index]
-#                 event_label = torch.squeeze(event_label, dim=-1).long()
-#                 loss_seg = self.cross_entropy(event_segmentation, event_label)
-#                 if weight is not None:
-#                     event_weight = weight[i][batch_index]
-#                     event_weight = torch.squeeze(event_weight, dim=-1).float()
-#                     total_loss += torch.mean(loss_seg * event_weight)
-#                 else:
-#                     total_loss += torch.mean(loss_seg)
-#                 # Accuracy
-#                 predicted_labels = torch.argmax(event_segmentation, dim=-1)
-#                 acc = (predicted_labels == event_label).sum().item() / float(predicted_labels.nelement())
-#                 total_acc += acc
-#                 count += 1
-#
-#         return {
-#             'accuracy': total_acc/count,
-#             'loss': total_loss/count
-#         }
-
 class SegmentationLoss(torch.nn.modules.loss._Loss):
     """
     Loss definition for UResNet.
@@ -120,13 +128,16 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
     For deghosting, it depends on a configuration parameter `ghost`:
 
     - If `ghost=True`, we first compute the cross-entropy loss on the ghost
-    point classification (weighted on the fly with sample statistics). Then we
-    compute a mask = all non-ghost points (based on true information in label)
-    and within this mask, compute a cross-entropy loss for the rest of classes.
+      point classification (weighted on the fly with sample statistics). Then we
+      compute a mask = all non-ghost points (based on true information in label)
+      and within this mask, compute a cross-entropy loss for the rest of classes.
 
     - If `ghost=False`, we compute a N+1-classes cross-entropy loss, where N is
-    the number of classes, not counting the ghost point class.
+      the number of classes, not counting the ghost point class.
 
+    See Also
+    --------
+    UResNet_Chain
     """
     INPUT_SCHEMA = [
         ["parse_sparse3d_scn", (int,), (3, 1)]
@@ -189,9 +200,12 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                     # loss_mask = self.cross_entropy(event_ghost, mask_label)
                     num_ghost_points = (mask_label == 1).sum().float()
                     num_nonghost_points = (mask_label == 0).sum().float()
-                    fraction = num_ghost_points / (num_ghost_points + num_nonghost_points)
+                    fraction = num_ghost_points \
+                             / (num_ghost_points + num_nonghost_points)
                     weight = torch.stack([fraction, 1. - fraction]).float()
-                    loss_mask = torch.nn.functional.cross_entropy(event_ghost, mask_label, weight=weight)
+                    loss_mask = torch.nn.functional.cross_entropy(event_ghost,
+                                                                  mask_label,
+                                                                  weight=weight)
                     mask_loss += loss_mask
                     # mask_loss += torch.mean(loss_mask)
 
@@ -211,7 +225,8 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                             nonghost2nonghost += (predicted_mask[mask_label==0] == 0).sum().item() / float(num_nonghost_points.item())
 
                         # Global ghost predictions accuracy
-                        acc_mask = predicted_mask.eq_(mask_label).sum().item() / float(predicted_mask.nelement())
+                        acc_mask = predicted_mask.eq_(mask_label).sum().item() \
+                                 / float(predicted_mask.nelement())
                         mask_acc += acc_mask
 
                     # Now mask to compute the rest of UResNet loss
@@ -236,8 +251,7 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                         class_count = [(event_label == c).sum().float() for c in range(self._num_classes)]
                         sum_class_count = len(event_label)
                         w = torch.Tensor([sum_class_count / c if c.item() > 0 else 0. for c in class_count]).float()
-                        if torch.cuda.is_available():
-                            w = w.cuda()
+                        w = w.to(event_label.device)
                         #print(class_count, w, class_count[0].item() > 0)
                         loss_seg = torch.nn.functional.cross_entropy(event_segmentation, event_label, weight=w)
                     else:
