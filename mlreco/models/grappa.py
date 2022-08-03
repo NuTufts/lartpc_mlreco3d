@@ -1,4 +1,3 @@
-from operator import xor
 import random
 import torch
 import numpy as np
@@ -306,7 +305,7 @@ class GNN(torch.nn.Module):
 
         # Form the requested network
         if len(clusts) == 1:
-            edge_index = np.empty((2,0))
+            edge_index = np.empty((2,0), dtype=np.int64)
         elif self.network == 'complete':
             edge_index = complete_graph(batch_ids, dist_mat, self.edge_max_dist)
         elif self.network == 'delaunay':
@@ -330,9 +329,6 @@ class GNN(torch.nn.Module):
             edge_index = edge_index[:,mask]
 
         # Update result with a list of edges for each batch id
-        if not edge_index.shape[1]:
-            return {**result, 'edge_index':[np.empty((2,0)) for _ in batches]}
-
         edge_index_split, ebids = split_edge_index(edge_index, batch_ids, batches)
         result['edge_index'] = [edge_index_split]
 
@@ -347,7 +343,7 @@ class GNN(torch.nn.Module):
         # Add start point and/or start direction to node features if requested
         if self.add_start_point or points is not None:
             if points is None:
-                points = get_cluster_points_label(cluster_data, particles, clusts, self.source_col==6, coords_index=self.coords_index)
+                points = get_cluster_points_label(cluster_data, particles, clusts, coords_index=self.coords_index)
             x = torch.cat([x, points.float()], dim=1)
             if self.add_start_dir:
                 dirs = get_cluster_directions(cluster_data[:, self.coords_index[0]:self.coords_index[1]], points[:,:3], clusts, self.start_dir_max_dist, self.start_dir_opt)

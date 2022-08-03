@@ -38,7 +38,7 @@ def format_fragments(fragments, frag_batch_ids, frag_seg, batch_column, batch_si
                     for c in fragments_np[b]] ) for b in bcids]
 
     frags = [np.array([vids[c].astype(np.int64) for c in fragments_np[b]],
-                        dtype=np.object if not same_length[idx] else np.int64) \
+                        dtype=object if not same_length[idx] else np.int64) \
                         for idx, b in enumerate(bcids)]
 
     frags_seg = [frag_seg_np[b] for idx, b in enumerate(bcids)]
@@ -222,9 +222,13 @@ class GraphSPICEFragmentManager(FragmentManager):
         #     print(torch.unique(filtered_input[f, self._batch_column], return_counts=True))
 
         #print(torch.unique(filtered_input[:, self._batch_column]))
-        frag_batch_ids = get_cluster_batch(filtered_input.detach().cpu().numpy(), \
-                                        fragments, batch_index=self._batch_column)
-        fragments_seg = get_cluster_label(filtered_input, fragments, column=4)
+        if len(fragments) > 0:
+            frag_batch_ids = get_cluster_batch(filtered_input.detach().cpu().numpy(), \
+                                            fragments, batch_index=self._batch_column)
+            fragments_seg = get_cluster_label(filtered_input, fragments, column=4)
+        else:
+            frag_batch_ids = np.empty((0,))
+            fragments_seg = np.empty((0,))
         # fragments = [np.arange(filtered_input.shape[0])[clust] \
         #              for clust in fragments]
         # We want the indices to refer to the unfiltered, original input

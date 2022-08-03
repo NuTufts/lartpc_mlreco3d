@@ -1,6 +1,5 @@
-import os, time, datetime, glob, sys
+import os, time, datetime, glob, sys, yaml
 import numpy as np
-import pprint
 try:
     import MinkowskiEngine as ME
 except ImportError:
@@ -59,19 +58,20 @@ def process_config(cfg, verbose=True):
         # Set MinkowskiEngine number of threads
         os.environ['OMP_NUM_THREADS'] = '16' # default value
         # Set default concat_result
-        default_concat_result = ['input_edge_features', 'input_node_features','points',
+        default_concat_result = ['input_edge_features', 'input_node_features','points', 'coordinates',
                                  'particle_node_features', 'particle_edge_features',
                                  'track_node_features', 'shower_node_features',
                                  'ppn_coords', 'mask_ppn', 'ppn_layers', 'classify_endpoints',
-                                 'vertex_layers', 'vertex_coords', 'primary_label_scales', 'segment_label_scales', 
-                                 'seediness', 'margins', 'embeddings', 'fragments', 
+                                 'vertex_layers', 'vertex_coords', 'primary_label_scales', 'segment_label_scales',
+                                 'seediness', 'margins', 'embeddings', 'fragments',
                                  'fragments_seg', 'shower_fragments', 'shower_edge_index',
                                  'shower_edge_pred','shower_node_pred','shower_group_pred','track_fragments',
                                  'track_edge_index', 'track_node_pred', 'track_edge_pred', 'track_group_pred',
                                  'particle_fragments', 'particle_edge_index', 'particle_node_pred',
                                  'particle_edge_pred', 'particle_group_pred', 'particles',
-                                 'inter_edge_index', 'inter_node_pred', 'inter_edge_pred',
+                                 'inter_edge_index', 'inter_node_pred', 'inter_edge_pred', 'inter_group_pred',
                                  'inter_particles', 'node_pred_p', 'node_pred_type',
+                                 'vertex_labels', 'anchors', 'grappa_inter_vertex_labels', 'grappa_inter_anchors',
                                  'kinematics_node_pred_p', 'kinematics_node_pred_type',
                                  'flow_edge_pred', 'kinematics_particles', 'kinematics_edge_index',
                                  'clust_fragments', 'clust_frag_seg', 'interactions', 'inter_cosmic_pred',
@@ -115,8 +115,9 @@ def process_config(cfg, verbose=True):
     # Report GPUs to be used (if any)
     # Report configuations
     if verbose:
-        pp = pprint.PrettyPrinter(indent=4)
-        pp.pprint(cfg)
+        from warnings import filterwarnings
+        filterwarnings('once', message='Deprecated', category=DeprecationWarning)
+        print(yaml.dump(cfg, default_flow_style=None))
 
 
 def make_directories(cfg, loaded_iteration, handlers=None):

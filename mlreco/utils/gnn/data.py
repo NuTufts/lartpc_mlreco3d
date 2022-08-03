@@ -191,7 +191,7 @@ def _get_extra_gnn_features(fragments,
         and `extra_feats` (if `use_supp` is True).
     """
     # Build a mask for the requested classes
-    mask = np.zeros(len(frag_seg), dtype=np.bool)
+    mask = np.zeros(len(frag_seg), dtype=bool)
     for c in classes:
         mask |= (frag_seg == c)
     mask = np.where(mask)[0]
@@ -264,7 +264,7 @@ def split_clusts(clusts, batch_ids, batches, counts):
     
     # Cast the list of clusters to np.array (object type)
     same_length = [np.all([len(c) == len(bclusts[0]) for c in bclusts]) for bclusts in clusts_split]
-    return [np.array(clusts_split[b], dtype=np.object if not sl else np.int64) for b, sl in enumerate(same_length)], cbids
+    return [np.array(clusts_split[b], dtype=object if not sl else np.int64) for b, sl in enumerate(same_length)], cbids
 
 @nb.njit(cache=True)
 def _split_clusts(clusts: nb.types.List(nb.int64[:]),
@@ -302,6 +302,10 @@ def split_edge_index(edge_index: nb.int64[:,:],
         [np.ndarray]: (B) List of list of edges
         [np.ndarray]: (B) List of edge IDs in each batch
     """
+    # If the input is empty, simply return defaults
+    if not edge_index.shape[1]:
+        return [np.empty((2,0), dtype=np.int64) for b in batches], [np.empty(0, dtype=np.int64) for b in batches]
+
     # For each batch ID, get the list of edges that belong to it
     ebids = [np.where(batch_ids[edge_index[0]] == b)[0] for b in batches]
 

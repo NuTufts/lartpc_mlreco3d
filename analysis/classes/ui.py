@@ -13,7 +13,7 @@ from analysis.algorithms.point_matching import *
 
 from mlreco.utils.groups import type_labels as TYPE_LABELS
 from mlreco.utils.vertex import get_vertex, predict_vertex
-from mlreco.utils.deghosting import deghost_labels_and_predictions
+from mlreco.utils.deghosting import deghost_labels_and_predictions, compute_rescaled_charge
 
 from mlreco.utils.gnn.cluster import get_cluster_label
 
@@ -67,16 +67,37 @@ class FullChainPredictor:
         self.index = self.data_blob['index']
 
         self.spatial_size             = predictor_cfg.get('spatial_size', 768)
-        self.min_overlap_count        = predictor_cfg.get('min_overlap_count', 10)
+        # For matching particles and interactions
+        self.min_overlap_count        = predictor_cfg.get('min_overlap_count', 0)
+        # Idem, can be 'count' or 'iou'
+        self.overlap_mode             = predictor_cfg.get('overlap_mode', 'iou')
         # Minimum voxel count for a true non-ghost particle to be considered
         self.min_particle_voxel_count = predictor_cfg.get('min_particle_voxel_count', 20)
         # We want to count how well we identify interactions with some PDGs
         # as primary particles
         self.primary_pdgs             = np.unique(predictor_cfg.get('primary_pdgs', []))
+        # Following 2 parameters are vertex heuristic parameters
         self.attaching_threshold      = predictor_cfg.get('attaching_threshold', 2)
         self.inter_threshold          = predictor_cfg.get('inter_threshold', 10)
 
         self.batch_mask = self.data_blob['input_data']
+
+        self.volume_boundaries = predictor_cfg.get('volume_boundaries', None)
+        if self.volume_boundaries is None:
+            # Using ICARUS Cryo 0 as a default
+            pass
+        else:
+            self.volume_boundaries = np.array(self.volume_boundaries, dtype=np.float64)
+            if 'meta' not in self.data_blob:
+                raise Exception("Cannot use volume boundaries because meta is missing from iotools config.")
+            else: # convert to voxel units
+                meta = self.data_blob['meta'][0]
+                min_x, min_y, min_z = meta[0:3]
+                size_voxel_x, size_voxel_y, size_voxel_z = meta[6:9]
+
+                self.volume_boundaries[0, :] = (self.volume_boundaries[0, :] - min_x) / size_voxel_x
+                self.volume_boundaries[1, :] = (self.volume_boundaries[1, :] - min_y) / size_voxel_y
+                self.volume_boundaries[2, :] = (self.volume_boundaries[2, :] - min_z) / size_voxel_z
 
     def __repr__(self):
         msg = "FullChainEvaluator(num_images={})".format(self.num_images)
@@ -94,15 +115,10 @@ class FullChainPredictor:
             - df (pd.DataFrame): pandas dataframe of ppn points, with
             x, y, z, coordinates, Score, Type, and sample index.
         '''
-        if self.deghosting:
-            # Deghosting is already applied during initialization
-            ppn = uresnet_ppn_type_point_selector(self.data_blob['input_data'][entry],
-                                                  self.result,
-                                                  entry=entry, apply_deghosting=False)
-        else:
-            ppn = uresnet_ppn_type_point_selector(self.data_blob['input_data'][entry],
-                                                  self.result,
-                                                  entry=entry)
+        # Deghosting is already applied during initialization
+        ppn = uresnet_ppn_type_point_selector(self.data_blob['input_data'][entry],
+                                              self.result,
+                                              entry=entry, apply_deghosting=not self.deghosting)
         ppn_voxels = ppn[:, 1:4]
         ppn_score = ppn[:, 5]
         ppn_type = ppn[:, 12]
@@ -113,7 +129,11 @@ class FullChainPredictor:
             x, y, z = ppn_voxels[i][0], ppn_voxels[i][1], ppn_voxels[i][2]
             ppn_candidates.append(np.array([x, y, z, pred_point_score, pred_point_type]))
 
-        ppn_candidates = np.vstack(ppn_candidates)
+        if len(ppn_candidates):
+            ppn_candidates = np.vstack(ppn_candidates)
+        else:
+            enable_classify_endpoints = 'classify_endpoints' in self.result
+            ppn_candidates = np.empty((0, 13 if not enable_classify_endpoints else 15), dtype=np.float32)
         return ppn_candidates
 
 
@@ -190,6 +210,37 @@ class FullChainPredictor:
             mask = labels == i
             new_labels[mask] = c
         return new_labels
+
+
+    def is_contained(self, points, threshold=30):
+        """
+        Parameters
+        ----------
+        points: np.ndarray
+            Shape (N, 3)
+        threshold: float or np.ndarray
+            Distance (in voxels) from boundaries beyond which
+            an object is contained. Can be an array if different
+            threshold must be applied in x, y and z (shape (3,)).
+
+        Returns
+        -------
+        bool
+        """
+        if not isinstance(threshold, np.ndarray):
+            threshold = threshold * np.ones((3,))
+        else:
+            assert threshold.shape[0] == 3
+            assert len(threshold.shape) == 1
+
+        if self.volume_boundaries is None:
+            raise Exception("Please define volume boundaries before using containment method.")
+
+        x_contained = (self.volume_boundaries[0, 0] + threshold[0] <= points[:, 0]) & (points[:, 0] <= self.volume_boundaries[0, 1] - threshold[0])
+        y_contained = (self.volume_boundaries[1, 0] + threshold[1] <= points[:, 1]) & (points[:, 1] <= self.volume_boundaries[1, 1] - threshold[1])
+        z_contained = (self.volume_boundaries[2, 0] + threshold[2] <= points[:, 0]) & (points[:, 2] <= self.volume_boundaries[2, 1] - threshold[2])
+
+        return (x_contained & y_contained & z_contained).all()
 
 
     def _fit_predict_fragments(self, entry):
@@ -319,12 +370,7 @@ class FullChainPredictor:
         ValueError.
 
         Returns:
-            - vertex_info: tuple of length 4, with the following objects:
-                * ppn_candidates:
-                * c_candidates:
-                * vtx_candidate: (x,y,z) coordinate of predicted vertex
-                * vtx_std: standard error on the predicted vertex
-
+            - vertex_info: (x,y,z) coordinate of predicted vertex
         '''
         vertex_info = predict_vertex(inter_idx, entry,
                                      self.data_blob['input_data'],
@@ -337,9 +383,9 @@ class FullChainPredictor:
 
 
     def get_fragments(self, entry, only_primaries=False,
-                      min_particle_voxel_count=0,
+                      min_particle_voxel_count=-1,
                       attaching_threshold=2,
-                      semantic_type=None, verbose=False) -> List[Particle]:
+                      semantic_type=None, verbose=False, true_id=False) -> List[Particle]:
         '''
         Method for retriving fragment list for given batch index.
 
@@ -359,8 +405,11 @@ class FullChainPredictor:
         Returns:
             - out: List of <Particle> instances (see Particle class definition).
         '''
+        if min_particle_voxel_count < 0:
+            min_particle_voxel_count = self.min_particle_voxel_count
+
         point_cloud = self.data_blob['input_data'][entry][:, 1:4]
-        depositions = self.data_blob['input_data'][entry][:, 4]
+        depositions = self.result['input_rescaled'][entry][:, 4]
         fragments = self.result['fragments'][entry]
         fragments_seg = self.result['fragments_seg'][entry]
 
@@ -376,10 +425,20 @@ class FullChainPredictor:
 
         temp = []
 
-        group_labels = self._fit_predict_groups(entry)
-        inter_labels = self._fit_predict_interaction_labels(entry)
-        group_ids = get_cluster_label(group_labels.reshape(-1, 1), fragments, column=0)
-        inter_ids = get_cluster_label(inter_labels.reshape(-1, 1), fragments, column=0)
+        if ('inter_group_pred' in self.result) and ('particles' in self.result) and len(fragments) > 0:
+
+            group_labels = self._fit_predict_groups(entry)
+            inter_labels = self._fit_predict_interaction_labels(entry)
+            group_ids = get_cluster_label(group_labels.reshape(-1, 1), fragments, column=0)
+            inter_ids = get_cluster_label(inter_labels.reshape(-1, 1), fragments, column=0)
+
+        else:
+            group_ids = np.ones(len(fragments)).astype(int) * -1
+            inter_ids = np.ones(len(fragments)).astype(int) * -1
+
+        if true_id:
+            true_fragment_labels = self.data_blob['cluster_label'][entry][:, 5]
+
 
         for i, p in enumerate(fragments):
             voxels = point_cloud[p]
@@ -394,6 +453,11 @@ class FullChainPredictor:
                             pid_conf=-1,
                             alias='Fragment')
             temp.append(part)
+            if true_id:
+                fid = true_fragment_labels[p]
+                fids, counts = np.unique(fid.astype(int), return_counts=True)
+                part.true_ids = fids
+                part.true_counts = counts
 
         # Label shower fragments as primaries and attach startpoint
         shower_counter = 0
@@ -441,7 +505,7 @@ class FullChainPredictor:
 
 
     def get_particles(self, entry, only_primaries=True,
-                      min_particle_voxel_count=10,
+                      min_particle_voxel_count=-1,
                       attaching_threshold=2) -> List[Particle]:
         '''
         Method for retriving particle list for given batch index.
@@ -469,12 +533,15 @@ class FullChainPredictor:
         Returns:
             - out: List of <Particle> instances (see Particle class definition).
         '''
-        point_cloud = self.data_blob['input_data'][entry][:, 1:4]
-        depositions = self.data_blob['input_data'][entry][:, 4]
-        particles = self.result['particles'][entry]
-        inter_group_pred = self.result['inter_group_pred'][entry]
+        if min_particle_voxel_count < 0:
+            min_particle_voxel_count = self.min_particle_voxel_count
 
-        particles_seg = self.result['particles_seg'][entry]
+        point_cloud      = self.data_blob['input_data'][entry][:, 1:4]
+        depositions      = self.result['input_rescaled'][entry][:, 4]
+        particles        = self.result['particles'][entry]
+        # inter_group_pred = self.result['inter_group_pred'][entry]
+        #print(point_cloud.shape, depositions.shape, len(particles))
+        particles_seg    = self.result['particles_seg'][entry]
 
         type_logits = self.result['node_pred_type'][entry]
         input_node_features = [None] * type_logits.shape[0]
@@ -483,18 +550,25 @@ class FullChainPredictor:
         pids = np.argmax(type_logits, axis=1)
 
         out = []
-
-        assert len(inter_group_pred) == len(particles)
+        if point_cloud.shape[0] == 0:
+            return out
         assert len(particles_seg) == len(particles)
         assert len(pids) == len(particles)
         assert len(input_node_features) == len(particles)
+        assert point_cloud.shape[0] == depositions.shape[0]
 
         node_pred_vtx = self.result['node_pred_vtx'][entry]
 
         assert node_pred_vtx.shape[0] == len(particles)
 
-        inter_labels = self._fit_predict_interaction_labels(entry)
-        inter_ids = get_cluster_label(inter_labels.reshape(-1, 1), particles, column=0)
+        if ('inter_group_pred' in self.result) and ('particles' in self.result) and len(particles) > 0:
+
+            assert len(self.result['inter_group_pred'][entry]) == len(particles)
+            inter_labels = self._fit_predict_interaction_labels(entry)
+            inter_ids = get_cluster_label(inter_labels.reshape(-1, 1), particles, column=0)
+
+        else:
+            inter_ids = np.ones(len(particles)).astype(int) * -1
 
         for i, p in enumerate(particles):
             voxels = point_cloud[p]
@@ -573,8 +647,7 @@ class FullChainPredictor:
         particles = self.get_particles(entry, only_primaries=drop_nonprimary_particles)
         out = group_particles_to_interactions_fn(particles)
         for ia in out:
-            vertex_info = self._fit_predict_vertex_info(entry, ia.id)
-            ia.vertex = vertex_info[2]
+            ia.vertex = self._fit_predict_vertex_info(entry, ia.id)
         return out
 
 
@@ -741,6 +814,91 @@ class FullChainEvaluator(FullChainPredictor):
         return set(particles_exclude)
 
 
+    def get_true_fragments(self, entry, verbose=False) -> List[TruthParticleFragment]:
+        '''
+        Get list of <TruthParticleFragment> instances for given <entry> batch id.
+        '''
+        # Both are "adapted" labels
+        labels = self.data_blob['cluster_label'][entry]
+        segment_label = self.data_blob['segment_label'][entry][:, -1]
+        rescaled_input_charge = self.result['input_rescaled'][entry][:, 4]
+
+        fragment_ids = set(list(np.unique(labels[:, 5]).astype(int)))
+        fragments = []
+
+        for fid in fragment_ids:
+            mask = labels[:, 5] == fid
+
+            semantic_type, counts = np.unique(labels[:, -1][mask], return_counts=True)
+            if semantic_type.shape[0] > 1:
+                if verbose:
+                    print("Semantic Type of Fragment {} is not "\
+                        "unique: {}, {}".format(fid,
+                                                str(semantic_type),
+                                                str(counts)))
+                perm = counts.argmax()
+                semantic_type = semantic_type[perm]
+            else:
+                semantic_type = semantic_type[0]
+
+            points = labels[mask][:, 1:4]
+            size = points.shape[0]
+            depositions = rescaled_input_charge[mask]
+            depositions_MeV = labels[mask][:, 4]
+            voxel_indices = np.where(mask)[0]
+
+            group_id, counts = np.unique(labels[:, 6][mask].astype(int), return_counts=True)
+            if group_id.shape[0] > 1:
+                if verbose:
+                    print("Group ID of Fragment {} is not "\
+                        "unique: {}, {}".format(fid,
+                                                str(group_id),
+                                                str(counts)))
+                perm = counts.argmax()
+                group_id = group_id[perm]
+            else:
+                group_id = group_id[0]
+
+            interaction_id, counts = np.unique(labels[:, 7][mask].astype(int), return_counts=True)
+            if interaction_id.shape[0] > 1:
+                if verbose:
+                    print("Interaction ID of Fragment {} is not "\
+                        "unique: {}, {}".format(fid,
+                                                str(interaction_id),
+                                                str(counts)))
+                perm = counts.argmax()
+                interaction_id = interaction_id[perm]
+            else:
+                interaction_id = interaction_id[0]
+
+
+            is_primary, counts = np.unique(labels[:, -2][mask].astype(bool), return_counts=True)
+            if is_primary.shape[0] > 1:
+                if verbose:
+                    print("Primary label of Fragment {} is not "\
+                        "unique: {}, {}".format(fid,
+                                                str(is_primary),
+                                                str(counts)))
+                perm = counts.argmax()
+                is_primary = is_primary[perm]
+            else:
+                is_primary = is_primary[0]
+
+            part = TruthParticleFragment(points, fid, semantic_type,
+                            interaction_id=interaction_id,
+                            group_id=group_id,
+                            image_id=entry,
+                            voxel_indices=voxel_indices,
+                            depositions=depositions,
+                            depositions_MeV=depositions_MeV,
+                            is_primary=is_primary,
+                            alias='Fragment')
+
+            fragments.append(part)
+
+        return fragments
+
+
     def get_true_particles(self, entry, only_primaries=True,
                            verbose=False) -> List[TruthParticle]:
         '''
@@ -763,8 +921,9 @@ class FullChainEvaluator(FullChainPredictor):
         labels = self.data_blob['cluster_label'][entry]
         if self.deghosting:
             labels_noghost = self.data_blob['cluster_label_noghost'][entry]
-        segment_label = self.data_blob['segment_label'][entry]
+        segment_label = self.data_blob['segment_label'][entry][:, -1]
         particle_ids = set(list(np.unique(labels[:, 6]).astype(int)))
+        rescaled_input_charge = self.result['input_rescaled'][entry][:, 4]
 
         particles = []
         exclude_ids = set([])
@@ -845,7 +1004,8 @@ class FullChainEvaluator(FullChainPredictor):
                 nu_id = nu_id[0]
 
             fragments = np.unique(labels[mask][:, 5].astype(int))
-            depositions = self.data_blob['input_data'][entry][mask][:, 4].squeeze()
+            depositions_MeV = labels[mask][:, 4]
+            depositions = rescaled_input_charge[mask] # Will be in ADC
             coords_noghost, depositions_noghost = None, None
             if self.deghosting:
                 coords_noghost = labels_noghost[mask_noghost][:, 1:4]
@@ -858,12 +1018,23 @@ class FullChainEvaluator(FullChainPredictor):
                 depositions=depositions,
                 is_primary=is_primary,
                 coords_noghost=coords_noghost,
-                depositions_noghost=depositions_noghost)
+                depositions_noghost=depositions_noghost,
+                depositions_MeV=depositions_MeV)
+
             particle.p = np.array([p.px(), p.py(), p.pz()])
             particle.fragments = fragments
             particle.particle_asis = p
             particle.nu_id = nu_id
             particle.voxel_indices = np.where(mask)[0]
+
+            particle.startpoint = np.array([p.first_step().x(),
+                                            p.first_step().y(),
+                                            p.first_step().z()])
+
+            if semantic_type == 1:
+                particle.endpoint = np.array([p.last_step().x(),
+                                              p.last_step().y(),
+                                              p.last_step().z()])
 
             if particle.voxel_indices.shape[0] >= self.min_particle_voxel_count:
                 particles.append(particle)
@@ -875,7 +1046,10 @@ class FullChainEvaluator(FullChainPredictor):
 
 
     def get_true_interactions(self, entry, drop_nonprimary_particles=True,
-                              min_particle_voxel_count=20) -> List[Interaction]:
+                              min_particle_voxel_count=-1) -> List[Interaction]:
+        if min_particle_voxel_count < 0:
+            min_particle_voxel_count = self.min_particle_voxel_count
+
         true_particles = self.get_true_particles(entry, only_primaries=drop_nonprimary_particles)
         out = group_particles_to_interactions_fn(true_particles,
                                                  get_nu_id=True, mode='truth')
@@ -916,8 +1090,11 @@ class FullChainEvaluator(FullChainPredictor):
             particles_from = self.get_true_particles(entry, only_primaries=only_primaries)
         else:
             raise ValueError("Mode {} is not valid. For matching each"\
-                " prediction to truth, use 'pred_to_true' (and vice versa).")
-        matched_pairs, _, _ = match_particles_fn(particles_from, particles_to, **kwargs)
+                " prediction to truth, use 'pred_to_true' (and vice versa).".format(mode))
+        matched_pairs, _, _ = match_particles_fn(particles_from, particles_to,
+                                                min_overlap=self.min_overlap_count,
+                                                overlap_mode=self.overlap_mode,
+                                                **kwargs)
         return matched_pairs
 
 
@@ -933,9 +1110,11 @@ class FullChainEvaluator(FullChainPredictor):
             ints_from = self.get_true_interactions(entry, drop_nonprimary_particles=drop_nonprimary_particles)
         else:
             raise ValueError("Mode {} is not valid. For matching each"\
-                " prediction to truth, use 'pred_to_true' (and vice versa).")
+                " prediction to truth, use 'pred_to_true' (and vice versa).".format(mode))
 
-        matched_interactions, _, counts = match_interactions_fn(ints_from, ints_to, **kwargs)
+        matched_interactions, _, counts = match_interactions_fn(ints_from, ints_to,
+                                                                min_overlap=self.min_overlap_count,
+                                                                **kwargs)
 
         if match_particles:
             for interactions in matched_interactions:
@@ -945,7 +1124,9 @@ class FullChainEvaluator(FullChainPredictor):
                 else:
                     domain_particles, codomain_particles = domain.particles, codomain.particles
                     # continue
-                matched_particles, _, _ = match_particles_fn(domain_particles, codomain_particles)
+                matched_particles, _, _ = match_particles_fn(domain_particles, codomain_particles,
+                                                            min_overlap=self.min_overlap_count,
+                                                            overlap_mode=self.overlap_mode)
 
         if return_counts:
             return matched_interactions, counts
