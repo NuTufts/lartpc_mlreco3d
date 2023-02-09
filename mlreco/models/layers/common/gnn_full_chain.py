@@ -462,6 +462,7 @@ class FullChainGNN(torch.nn.Module):
                 for i in range(len(pid_logits)):
                     for b in range(len(pid_logits[i])):
                         pid_logits[i][b] += sem_pid_logic[part_seg[part_batch_ids==b]]
+                result['node_pred_type'] = pid_logits
 
         # ---
         # 4. GNN for particle flow & kinematics
@@ -582,7 +583,7 @@ class FullChainGNN(torch.nn.Module):
         """
 
         result, input, revert_func = self.full_chain_cnn(input)
-        if len(input[0]) and self.process_fragments and (self.enable_gnn_track or self.enable_gnn_shower or self.enable_gnn_inter or self.enable_gnn_particle):
+        if len(input[0]) and 'frags' in result and self.process_fragments and (self.enable_gnn_track or self.enable_gnn_shower or self.enable_gnn_inter or self.enable_gnn_particle):
             result = self.full_chain_gnn(result, input)
 
         result = revert_func(result)
@@ -606,7 +607,7 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
         super(FullChainLoss, self).__init__()
 
         # Configure the chain first
-        setup_chain_cfg(self, cfg)
+        setup_chain_cfg(self, cfg, False)
 
         if self.enable_gnn_shower:
             self.shower_gnn_loss         = GNNLoss(cfg, 'grappa_shower_loss', batch_col=self.batch_col, coords_col=self.coords_col)
@@ -652,7 +653,7 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
             loss += self.deghost_weight*res_deghost['loss']
             deghost = (out['ghost'][0][:,0] > out['ghost'][0][:,1]) & (seg_label[0][:,-1] < 5) # Only apply loss to reco/true non-ghosts
 
-        if self.enable_uresnet:
+        if self.enable_uresnet and 'segmentation' in out:
             if not self.enable_charge_rescaling:
                 res_seg = self.uresnet_loss(out, seg_label)
             else:
@@ -663,7 +664,7 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
             loss += self.segmentation_weight*res_seg['loss']
             #print('uresnet ', self.segmentation_weight, res_seg['loss'], loss)
 
-        if self.enable_ppn:
+        if self.enable_ppn and 'ppn_output_coordinates' in out:
             # Apply the PPN loss
             res_ppn = self.ppn_loss(out, seg_label, ppn_label)
             for key in res_ppn:
@@ -672,7 +673,8 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
             accuracy += res_ppn['accuracy']
             loss += self.ppn_weight*res_ppn['loss']
 
-        if self.enable_ghost and (self.enable_cnn_clust or \
+        if self.enable_ghost and 'ghost_label' in out \
+                             and (self.enable_cnn_clust or \
                                   self.enable_gnn_track or \
                                   self.enable_gnn_shower or \
                                   self.enable_gnn_inter or \
@@ -726,7 +728,7 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
 
                 segmentation_pred = out['segmentation'][0]
 
-                if self.enable_ghost and not self.enable_charge_rescaling:
+                if self.enable_ghost:
                     segmentation_pred = segmentation_pred[deghost]
                 if self._gspice_use_true_labels:
                     gs_seg_label = torch.cat([cluster_label[0][:, :4], segment_label[:, None]], dim=1)
@@ -892,9 +894,9 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
         if self.verbose:
             if self.enable_charge_rescaling:
                 print('Deghosting Accuracy: {:.4f}'.format(res_deghost['accuracy']))
-            if self.enable_uresnet:
+            if self.enable_uresnet and 'segmentation' in out:
                 print('Segmentation Accuracy: {:.4f}'.format(res_seg['accuracy']))
-            if self.enable_ppn:
+            if self.enable_ppn and 'ppn_output_coordinates' in out:
                 print('PPN Accuracy: {:.4f}'.format(res_ppn['accuracy']))
             if self.enable_cnn_clust and ('graph' in out or 'embeddings' in out):
                 if not self._enable_graph_spice:
@@ -927,16 +929,16 @@ class FullChainLoss(torch.nn.modules.loss._Loss):
                 elif 'grappa_kinematics_p_accuracy' in res:
                     print('Momentum accuracy: {:.4f}'.format(res['grappa_kinematics_p_accuracy']))
             if 'node_pred_vtx' in out:
-                if 'grappa_inter_vtx_score_acc' in res:
-                    print('Primary particle score accuracy: {:.4f}'.format(res['grappa_inter_vtx_score_acc']))
-                elif 'grappa_kinematics_vtx_score_acc' in res:
-                    print('Primary particle score accuracy: {:.4f}'.format(res['grappa_kinematics_vtx_score_acc']))
+                if 'grappa_inter_vtx_score_accuracy' in res:
+                    print('Primary particle score accuracy: {:.4f}'.format(res['grappa_inter_vtx_score_accuracy']))
+                elif 'grappa_kinematics_vtx_score_accuracy' in res:
+                    print('Primary particle score accuracy: {:.4f}'.format(res['grappa_kinematics_vtx_score_accuracy']))
             if self.enable_cosmic:
                 print('Cosmic discrimination accuracy: {:.4f}'.format(res_cosmic['accuracy']))
         return res
 
 
-def setup_chain_cfg(self, cfg):
+def setup_chain_cfg(self, cfg, print_info=True):
     """
     Prepare both FullChain and FullChainLoss
 
@@ -974,7 +976,7 @@ def setup_chain_cfg(self, cfg):
     self.enable_gnn_kinematics = chain_cfg.get('enable_gnn_kinematics', False)
     self.enable_cosmic         = chain_cfg.get('enable_cosmic', False)
 
-    if self.verbose:
+    if self.verbose and print_info:
         print("Shower GNN: {}".format(self.enable_gnn_shower))
         print("Track GNN: {}".format(self.enable_gnn_track))
         print("Particle GNN: {}".format(self.enable_gnn_particle))
@@ -987,14 +989,14 @@ def setup_chain_cfg(self, cfg):
         self.enable_gnn_particle or \
         self.enable_gnn_inter or \
         self.enable_gnn_kinematics or self.enable_cosmic):
-        if self.verbose:
+        if self.verbose and print_info:
             msg = """
             Since one of the GNNs are turned on, process_fragments is turned ON.
             """
             print(msg)
         self.process_fragments = True
 
-    if self.process_fragments and self.verbose:
+    if self.process_fragments and self.verbose and print_info:
         msg = """
         Fragment processing is turned ON. When training CNN models from
          scratch, we recommend turning fragment processing OFF as without

@@ -75,15 +75,13 @@ from mlreco.iotools.parsers.sparse import (
     parse_sparse2d,
     parse_sparse3d,
     parse_sparse3d_ghost,
-    parse_sparse2d_scn, # Deprecated
-    parse_sparse3d_scn # Depreacted
+    parse_sparse3d_charge_rescaled # TEMPORARY
 )
 
 from mlreco.iotools.parsers.cluster import (
     parse_cluster2d,
     parse_cluster3d,
-    parse_cluster3d_kinematics_clean, # Deprecated
-    parse_cluster3d_clean_full # Depreacted
+    parse_cluster3d_charge_rescaled # TEMPORARY
 )
 
 from mlreco.iotools.parsers.particles import (
@@ -93,15 +91,13 @@ from mlreco.iotools.parsers.particles import (
     parse_particle_coords,
     parse_particle_graph,
     parse_particle_singlep_pdg,
-    parse_particle_singlep_einit,
-    parse_particle_asis, # Deprecated
-    parse_neutrino_asis, # Deprecated
-    parse_particle_points_with_tagging, # Deprecated
-    parse_particle_graph_corrected # Deprecated
+    parse_particle_singlep_einit
 )
 
 from mlreco.iotools.parsers.misc import (
     parse_meta2d,
     parse_meta3d,
-    parse_run_info
+    parse_run_info,
+    parse_opflash,
+    parse_crthits
 )

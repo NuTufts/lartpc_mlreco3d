@@ -1,22 +1,14 @@
 import numpy as np
 import pandas as pd
-import sys
 import os, re
 import torch
 import yaml
 import time
-from scipy.spatial.distance import cdist
 from sklearn.metrics import adjusted_rand_score as ari
-import argparse
-
-current_directory = os.path.dirname(os.path.abspath(__file__))
-current_directory = os.path.dirname(current_directory)
-sys.path.insert(0, current_directory)
 
 from mlreco.utils.metrics import *
 from mlreco.trainval import trainval
 from mlreco.iotools.factories import loader_factory
-from sklearn.cluster import DBSCAN
 from pprint import pprint
 
 
@@ -175,7 +167,7 @@ def fit_predict(embeddings, seediness, margins, fitfunc,
     num_points = embeddings.shape[0]
     count = 0
     probs = []
-    unclustered = torch.ones(num_points, device=device).byte()
+    unclustered = torch.ones(num_points, device=device, dtype=torch.bool)
     while count < num_points:
         seed_idx = (seediness * unclustered.float()).argmax()
         if seediness[seed_idx] < s_threshold:
@@ -184,10 +176,10 @@ def fit_predict(embeddings, seediness, margins, fitfunc,
         f = fitfunc(centroid, sigma)
         p = f(embeddings)
         probs.append(p.view(-1, 1))
-        unclustered[p > p_threshold] = 0
-        count += torch.sum(p > p_threshold)
+        count += torch.sum(p[unclustered] > p_threshold)
+        unclustered[p > p_threshold] = False
     if len(probs) == 0:
-        return torch.ones(num_points, device=device).long()
+        return torch.zeros(num_points, device=device).long()
     probs = torch.cat(probs, dim=1)
     labels = probs.argmax(dim=1)
     return labels
@@ -199,7 +191,7 @@ def fit_predict_np(embeddings, seediness, margins, fitfunc,
     seediness = seediness.reshape(-1)
     count = 0
     probs = []
-    unclustered = np.ones(num_points, dtype=np.byte)
+    unclustered = np.ones(num_points, dtype=np.bool_)
     while count < num_points:
         seed_idx = (seediness * unclustered.astype(float)).argmax()
         if seediness[seed_idx] < s_threshold:
@@ -208,10 +200,10 @@ def fit_predict_np(embeddings, seediness, margins, fitfunc,
         f = fitfunc(centroid, sigma)
         p = f(embeddings)
         probs.append(p.reshape(-1, 1))
-        unclustered[p > p_threshold] = 0
-        count += np.sum(p > p_threshold)
+        count += np.sum(p[unclustered] > p_threshold)
+        unclustered[p > p_threshold] = False
     if len(probs) == 0:
-        return np.ones(num_points).astype(np.long)
+        return np.zeros(num_points).astype(np.long)
     probs = np.concatenate(probs, axis=1)
     labels = probs.argmax(axis=1)
     return labels

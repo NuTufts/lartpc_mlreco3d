@@ -1,7 +1,6 @@
 import numpy as np
 from larcv import larcv
 from mlreco.utils.dbscan import dbscan_types
-from mlreco.iotools.parsers.sparse import parse_sparse3d_scn
 
 
 def parse_meta2d(sparse_event, projection_id = 0):
@@ -122,3 +121,54 @@ def parse_run_info(sparse_event):
          (run, subrun, event)
     """
     return sparse_event.run(), sparse_event.subrun(), sparse_event.event()
+
+
+def parse_opflash(opflash_event):
+    """
+    Copy construct OpFlash and return an array of larcv::Flash.
+
+    .. code-block:: yaml
+        schema:
+          opflash_cryoE:
+            parser:parse_opflash
+            opflash_event: opflash_cryoE
+
+    Configuration
+    -------------
+    opflash_event: larcv::EventFlash or list of larcv::EventFlash
+
+    Returns
+    -------
+    list
+    """
+    if not isinstance(opflash_event, list):
+        opflash_event = [opflash_event]
+
+    opflash_list = []
+    for x in opflash_event:
+        opflash_list.extend(x.as_vector())
+
+    opflashes = [larcv.Flash(f) for f in opflash_list]
+    return opflashes
+
+
+def parse_crthits(crthit_event):
+    """
+    Copy construct CRTHit and return an array of larcv::CRTHit.
+
+    .. code-block:: yaml
+        schema:
+          crthits:
+            parser:parse_crthit
+            crthit_event: crthit_crthit
+
+    Configuration
+    -------------
+    crthit_event: larcv::CRTHit
+
+    Returns
+    -------
+    list
+    """
+    crthits = [larcv.CRTHit(c) for c in crthit_event.as_vector()]
+    return crthits

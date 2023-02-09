@@ -5,7 +5,6 @@ import torch.nn.functional as F
 from torch_geometric.nn import fps, knn
 
 from .lovasz import StableBCELoss, lovasz_hinge, lovasz_softmax_flat
-from mlreco.models.layers.common.dbscan import distances
 
 # Collection of Miscellaneous Loss Functions not yet implemented in Pytorch.
 
@@ -238,7 +237,7 @@ def inter_cluster_loss(cluster_means, margin=0.2):
         return 0.0
     else:
         indices = torch.triu_indices(cluster_means.shape[0], cluster_means.shape[0], 1)
-        dist = distances(cluster_means, cluster_means)
+        dist = squared_distances(cluster_means, cluster_means)
         return torch.pow(torch.clamp(2.0 * margin - dist[indices[0, :], \
             indices[1, :]], min=0), 2).mean()
 
@@ -251,7 +250,7 @@ def margin_smoothing_loss(sigma, sigma_means, labels, margin=0):
     x = sigma[:, None]
     mu = sigma_means[None, :]
     l = torch.sqrt(torch.clamp(torch.abs(x-mu) - margin, min=0)**2 + 1e-6)
-    l = torch.gather(l, 1, labels.view(-1, 1)).squeeze()
+    l = torch.gather(l, 1, labels.view(-1, 1)).view(-1)
     loss = torch.mean(scatter_mean(l, labels))
     return loss
 
@@ -299,15 +298,6 @@ def multivariate_kernel(centroid, log_sigma, Lprime, eps=1e-8):
     return f
 
 
-
-
-
-def squared_distances(v1, v2):
-    v1_2 = v1.unsqueeze(1).expand(v1.size(0), v2.size(0), v1.size(1)).double()
-    v2_2 = v2.unsqueeze(0).expand(v1.size(0), v2.size(0), v1.size(1)).double()
-    return torch.pow(v2_2 - v1_2, 2).sum(2)
-
-
 def bhattacharyya_distance_matrix(v1, v2, eps=1e-8):
     x1, s1 = v1[:, :3], v1[:, 3].view(-1)
     x2, s2 = v2[:, :3], v1[:, 3].view(-1)
@@ -319,12 +309,18 @@ def bhattacharyya_distance_matrix(v1, v2, eps=1e-8):
     return out
 
 
+def squared_distances(v1, v2):
+    v1_2 = v1.unsqueeze(1).expand(v1.size(0), v2.size(0), v1.size(1)).double()
+    v2_2 = v2.unsqueeze(0).expand(v1.size(0), v2.size(0), v1.size(1)).double()
+    return torch.pow(v2_2 - v1_2, 2).sum(2)
+
+
 def bhattacharyya_coeff_matrix(v1, v2, eps=1e-6):
     x1, s1 = v1[:, :3], v1[:, 3].view(-1)
     x2, s2 = v2[:, :3], v1[:, 3].view(-1)
     g1 = torch.ger(s1**2, 1.0 / (s2**2 + eps))
     g2 = g1.t()
-    dist = squared_distances(x1.contiguous(), x2.contiguous())
+    dist = torch.cidst(x1.contiguous(), x2.contiguous())
     denom = 1.0 / (eps + s1.unsqueeze(1)**2 + s2**2)
     out = 0.25 * torch.log(0.25 * (g1 + g2 + 2)) + 0.25 * dist / denom
     out = torch.exp(-out)
