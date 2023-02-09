@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import torch
 import torch.nn as nn
@@ -96,6 +97,7 @@ class UResNet_Chain(nn.Module):
 
         if self.ghost:
             print("Ghost Masking is enabled for UResNet Segmentation")
+            print(" Ghost label=",self.ghost_label)
             self.linear_ghost = ME.MinkowskiLinear(self.F, 2)
 
         # print('Total Number of Trainable Parameters (mink_uresnet)= {}'.format(
@@ -167,6 +169,8 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
         If ghost = True, then num_classes should not count the ghost class.
         If ghost_label > -1, then we perform only ghost segmentation.
         """
+        #print("NLABEL: ",len(label))
+        #print("NSEG: ",len(result["segmentation"]))
         assert len(result['segmentation']) == len(label)
         batch_ids = [d[:, self._batch_col] for d in label]
         # print("batch ids", batch_ids)
@@ -179,24 +183,24 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
         for i in range(len(label)):
             for b in batch_ids[i].unique():
                 batch_index = batch_ids[i] == b
-
                 event_segmentation = result['segmentation'][i][batch_index]  # (N, num_classes)
                 event_label = label[i][batch_index][:, -1][:, None]  # (N, 1)
                 event_label = torch.squeeze(event_label, dim=-1).long()
-                if self._ghost_label > -1:
-                    event_label = (event_label == self._ghost_label).long()
+                #if self._ghost_label > -1:
+                #    event_label = (event_label == self._ghost_label).long() # mask for true ghost points
 
-                elif self._ghost:
+                if self._ghost:
                     # check and warn about invalid labels
-                    unique_label,unique_count = torch.unique(event_label,return_counts=True)
+                    ghost_mask = event_label==self._ghost_label
+                    unique_label,unique_count = torch.unique(event_label[ghost_mask],return_counts=True)
                     if (unique_label > self._num_classes).long().sum():
                         print('Invalid semantic label found (will be ignored)')
                         print('Semantic label values:',unique_label)
                         print('Label counts:',unique_count)
-                    print("event_label:: unique=",unique_label,"counts=",unique_count)
+                    #print("event_label:: unique=",unique_label,"counts=",unique_count)
                     event_ghost = result['ghost'][i][batch_index]  # (N, 2)
                     # 0 = not a ghost point, 1 = ghost point
-                    mask_label = (event_label == self._ghost_label).long()
+                    mask_label = (ghost_mask).long()
                     # loss_mask = self.cross_entropy(event_ghost, mask_label)
                     num_ghost_points = (mask_label == 1).sum().float()
                     num_nonghost_points = (mask_label == 0).sum().float()
@@ -216,11 +220,13 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
 
                         # Accuracy ghost2ghost = fraction of correcly predicted
                         # ghost points as ghost points
+                        #print("num_ghost_points=",num_ghost_points.item())                        
                         if float(num_ghost_points.item()) > 0:
                             ghost2ghost += (predicted_mask[mask_label==1] == 1).sum().item() / float(num_ghost_points.item())
 
                         # Accuracy noghost2noghost = fraction of correctly predicted
                         # non ghost points as non ghost points
+                        #print("num_nonghost_points=",num_nonghost_points.item())
                         if float(num_nonghost_points.item()) > 0:
                             nonghost2nonghost += (predicted_mask[mask_label==0] == 0).sum().item() / float(num_nonghost_points.item())
 
@@ -284,25 +290,28 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
 
         if self._ghost:
             results = {
-                'accuracy': uresnet_acc/count if count else 1.,
-                'loss': (self._alpha * uresnet_loss + self._beta * mask_loss)/count if count else self._alpha * uresnet_loss + self._beta * mask_loss,
+                'accuracy': uresnet_acc/float(count) if count else 1.,
+                'loss': (self._alpha * uresnet_loss + self._beta * mask_loss)/float(count) if count else self._alpha * uresnet_loss + self._beta * mask_loss,
                 'ghost_mask_accuracy': mask_acc / count if count else 1.,
                 'ghost_mask_loss': self._beta * mask_loss / count if count else self._beta * mask_loss,
                 'uresnet_accuracy': uresnet_acc / count if count else 1.,
                 'uresnet_loss': self._alpha * uresnet_loss / count if count else self._alpha * uresnet_loss,
-                'ghost2ghost': ghost2ghost / count if count else 1.,
+                'ghost2ghost': ghost2ghost / float(count) if count else 1.,
                 'nonghost2nonghost': nonghost2nonghost / count if count else 1.
             }
+            print("UResNet Segmentation Loss (w/ ghosts)-----------")
             for k,v in results.items():
                 print(" ",k,": ",v)
+            print("------------------------------------------------")
         else:
             results = {
-                'accuracy': uresnet_acc/count if count else 1.,
-                'loss': uresnet_loss/count if count else uresnet_loss
+                'accuracy': uresnet_acc/float(count) if count else 1.,
+                'loss': uresnet_loss/float(count) if count else uresnet_loss
             }
         for c in range(self._num_classes):
             if count_class[c] > 0:
                 results['accuracy_class_%d' % c] = uresnet_acc_class[c]/count_class[c]
             else:
                 results['accuracy_class_%d' % c] = 1.
+        sys.stdout.flush()                
         return results

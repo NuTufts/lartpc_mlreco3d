@@ -409,6 +409,7 @@ class PPNLonelyLoss(torch.nn.modules.loss._Loss):
 
         # Restrict the label points to specific classes (pass a list if needed)
         self._point_classes = self.loss_config.get('point_classes', [])
+        print("PPNLonelyLoss Created")
 
     @staticmethod
     def pairwise_distances(v1, v2):
@@ -583,4 +584,10 @@ class PPNLonelyLoss(torch.nn.modules.loss._Loss):
         total_acc = total_acc / num_batches if num_batches else 1.
         res['loss'] = total_loss
         res['accuracy'] = float(total_acc)
+
+        with torch.no_grad():
+            print("PPNLonelyLoss ----------------")
+            for x in res:
+                print("  ",x,": ",res[x])
+            print("------------------------------")                    
         return res
