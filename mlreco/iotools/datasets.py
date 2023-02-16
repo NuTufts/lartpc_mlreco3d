@@ -14,7 +14,8 @@ class LArCVDataset(Dataset):
     can be configured with arbitrary number of parser functions where each function can take arbitrary number of
     LArCV event data objects. The assumption is that each data chunk respects the LArCV event boundary.
     """
-    def __init__(self, data_schema, data_keys, limit_num_files=0, limit_num_samples=0, event_list=None, skip_event_list=None):
+    def __init__(self, data_schema, data_keys, limit_num_files=0, limit_num_samples=0,
+                 event_list=None, skip_event_list=None, nvoxel_limit=-1):
         """
         Instantiates the LArCVDataset.
 
@@ -37,6 +38,8 @@ class LArCVDataset(Dataset):
             a list of integers to specify which event (ttree index) to process
         skip_event_list : list
             a list of integers to specify which events (ttree index) to skip
+        nvoxel_limit: int
+            the limit to the number of voxels in the tensor, i.e. cap on length of coord and feat tensors
         """
 
         # Create file list
@@ -138,6 +141,8 @@ class LArCVDataset(Dataset):
         if limit_num_samples > 0 and self._entries > limit_num_samples:
             self._entries = limit_num_samples
 
+        self._nvoxel_limit = nvoxel_limit
+
         print('Found %d events in file(s)' % len(self._event_list))
 
         # Flag to identify if Trees are initialized or not
@@ -180,8 +185,14 @@ class LArCVDataset(Dataset):
         lns         = 0 if not 'limit_num_samples' in cfg else int(cfg['limit_num_samples'])
         event_list  = LArCVDataset.get_event_list(cfg, 'event_list')
         skip_event_list = LArCVDataset.get_event_list(cfg, 'skip_event_list')
+        nvoxel_limit = -1 if not 'nvoxel_limit' in cfg else int(cfg['nvoxel_limit'])
 
-        return LArCVDataset(data_schema=data_schema, data_keys=data_keys, limit_num_files=lnf, event_list=event_list, skip_event_list=skip_event_list)
+        return LArCVDataset(data_schema=data_schema,
+                            data_keys=data_keys,
+                            limit_num_files=lnf,
+                            event_list=event_list,
+                            skip_event_list=skip_event_list,
+                            nvoxel_limit=nvoxel_limit)
 
     def data_keys(self):
         return self._data_keys
@@ -223,18 +234,21 @@ class LArCVDataset(Dataset):
 
         # Limit the number of voxels in the tensor.
         # if over, sample randomly
-        limit = 500000
-        nvoxels = result['input_data'].shape[0]
-        if nvoxels>limit:
-            print("hit voxel limist: subsampling required")
+        #print(result)
+        limit = 100000
+        coord = result['input_data'][0]
+        nvoxels = coord.shape[0]
+        if self._nvoxel_limit>0 and nvoxels>self._nvoxel_limit:
+            print("hit voxel limit [",nvoxels,">",self._nvoxel_limit," subsampling required")
             # we need to subsample
             subsample_fraction = float(limit)/float(nvoxels)
             r = np.random.rand( nvoxels )
             sel = r<subsample_fraction
-            print("sample down to ",sel.sum()," voxels")
-            for x in ['input_data','segment_label']:
-                subx = result[x][sel[:]]
-                result[x] = subx
+            print("sample down to ",sel.sum()," voxels")            
+            for x in ['input_data','segment_label','cluster_label']:
+                coord = result[x][0][sel[:]]
+                feat  = result[x][1][sel[:]]
+                result[x] = (coord,feat)
 
         result['index'] = event_idx
         return result
