@@ -221,5 +221,20 @@ class LArCVDataset(Dataset):
             name = self._data_keys[index]
             result[name] = parser(**kwargs)
 
+        # Limit the number of voxels in the tensor.
+        # if over, sample randomly
+        limit = 500000
+        nvoxels = result['input_data'].shape[0]
+        if nvoxels>limit:
+            print("hit voxel limist: subsampling required")
+            # we need to subsample
+            subsample_fraction = float(limit)/float(nvoxels)
+            r = np.random.rand( nvoxels )
+            sel = r<subsample_fraction
+            print("sample down to ",sel.sum()," voxels")
+            for x in ['input_data','segment_label']:
+                subx = result[x][sel[:]]
+                result[x] = subx
+
         result['index'] = event_idx
         return result
