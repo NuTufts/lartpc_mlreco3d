@@ -1,4 +1,4 @@
-import os, glob, inspect
+import os, sys, glob, inspect
 import numpy as np
 from torch.utils.data import Dataset
 import mlreco.iotools.parser_factory as parser_factory
@@ -235,17 +235,20 @@ class LArCVDataset(Dataset):
         # Limit the number of voxels in the tensor.
         # if over, sample randomly
         #print(result)
-        limit = 100000
         coord = result['input_data'][0]
         nvoxels = coord.shape[0]
+        print("NVOXELS: ",nvoxels)
+        sys.stdout.flush()
         if self._nvoxel_limit>0 and nvoxels>self._nvoxel_limit:
             print("hit voxel limit [",nvoxels,">",self._nvoxel_limit," subsampling required")
             # we need to subsample
-            subsample_fraction = float(limit)/float(nvoxels)
+            subsample_fraction = float(self._nvoxel_limit)/float(nvoxels)
             r = np.random.rand( nvoxels )
             sel = r<subsample_fraction
             print("sample down to ",sel.sum()," voxels")            
             for x in ['input_data','segment_label','cluster_label']:
+                if x not in result:
+                    continue
                 coord = result[x][0][sel[:]]
                 feat  = result[x][1][sel[:]]
                 result[x] = (coord,feat)

@@ -50,8 +50,14 @@ def process_config(cfg, verbose=True):
 
     if 'trainval' in cfg:
         # Set GPUs to be used
-        os.environ['CUDA_VISIBLE_DEVICES'] = cfg['trainval']['gpus']
-        cfg['trainval']['gpus'] = list(range(len([int(a) for a in cfg['trainval']['gpus'].split(',') if a.isdigit()])))
+        if cfg['trainval']['gpus'] is str:
+            cfg['trainval']['gpus'] = list(range(len([int(a) for a in cfg['trainval']['gpus'].split(',') if a.isdigit()])))
+        str_dev = ""
+        for i,gid in enumerate(cfg['trainval']['gpus']):
+            str_dev += "%d"%(gid)
+            if i+1<=len(cfg['trainval']['gpus']):
+                str_dev += ","
+        os.environ['CUDA_VISIBLE_DEVICES'] = str_dev
 
         # Update seed
         if cfg['trainval']['seed'] < 0:
@@ -111,6 +117,9 @@ def process_config(cfg, verbose=True):
         if cfg['iotool']['minibatch_size'] < 0:
             cfg['iotool']['minibatch_size'] = int(cfg['iotool']['batch_size'] / num_gpus)
         # Check consistency
+        print('batch_size: ',cfg['iotool']['batch_size'])
+        print('minibatch_size: ',cfg['iotool']['minibatch_size'])
+        print('num_gpus: ',num_gpus)
         if not (cfg['iotool']['batch_size'] % (cfg['iotool']['minibatch_size'] * num_gpus)) == 0:
             raise ValueError('BATCH_SIZE (-bs) must be multiples of MINIBATCH_SIZE (-mbs) and GPU count (--gpus)!')
 
