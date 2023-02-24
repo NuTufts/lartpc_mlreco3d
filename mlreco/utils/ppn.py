@@ -299,7 +299,8 @@ def uresnet_ppn_type_point_selector(data, out, score_threshold=0.5, type_score_t
     """
     event_data = data#.cpu().detach().numpy()
     points = out['points'][0]#[entry]#.cpu().detach().numpy()
-    ppn_coords = out['ppn_coords']
+    ppn_coords = out['ppn_coords'][entry] # list of arrays for each deconv layer
+
     # If 'points' is specified in `concat_result`,
     # then it won't be unwrapped.
     if len(points) == len(ppn_coords[-1]):
@@ -315,22 +316,31 @@ def uresnet_ppn_type_point_selector(data, out, score_threshold=0.5, type_score_t
         classify_endpoints = out['classify_endpoints'][0]
         print(classify_endpoints)
 
-    mask_ppn = out['mask_ppn'][-1]
+    mask_ppn = out['mask_ppn'][entry][-1]
     # predicted type labels
     # uresnet_predictions = torch.argmax(out['segmentation'][0], -1).cpu().detach().numpy()
     uresnet_predictions = np.argmax(out['segmentation'][entry], -1)
-
+    scores = scipy.special.softmax(points[:, score_col[0]:score_col[1]], axis=1)
+    
     if 'ghost' in out and apply_deghosting:
         mask_ghost = np.argmax(out['ghost'][entry], axis=1) == 0
         event_data = event_data[mask_ghost]
-        #points = points[mask_ghost]
-        #if enable_classify_endpoints:
-        #    classify_endpoints = classify_endpoints[mask_ghost]
-        #mask_ppn = mask_ppn[mask_ghost]
+        points = points[mask_ghost]
+        if enable_classify_endpoints:
+            classify_endpoints = classify_endpoints[mask_ghost]
+        mask_ppn = mask_ppn[mask_ghost]
+        ppn_coords = ppn_coords[-1][mask_ghost] # get the last layer
         uresnet_predictions = uresnet_predictions[mask_ghost]
-        #scores = scores[mask_ghost]
+        scores = scores[mask_ghost]
 
-    scores = scipy.special.softmax(points[:, score_col[0]:score_col[1]], axis=1)
+    print("mask_ghost: ",mask_ghost.shape)
+    print("event_data: ",event_data.shape)
+    print("points: ",points.shape)
+    print("mask_ppn: ",mask_ppn.shape)
+    print("ppn_coords: ",ppn_coords.shape)    
+    print("uresnet_predictions: ",uresnet_predictions.shape)
+    print("scores: ",scores.shape)
+
     pool_op = None
     if   score_pool == 'max'  : pool_op=np.amax
     elif score_pool == 'mean' : pool_op = np.amean
@@ -350,7 +360,9 @@ def uresnet_ppn_type_point_selector(data, out, score_threshold=0.5, type_score_t
         final_softmax = []
         final_endpoints = []
         batch_index = batch_ids == b
-        batch_index2 = ppn_coords[-1][:, 0] == b
+        batch_index2 = ppn_coords[:, 0] == b
+        print("batch_index: ",batch_index.shape)
+        print("batch_index2: ",batch_index2.shape)
         # print(batch_index.shape, batch_index2.shape, mask_ppn.shape, scores.shape)
         mask = ((~(mask_ppn[batch_index2] == 0)).any(axis=1)) & (scores[batch_index2][:, 1] > score_threshold)
         # If we want to restrict the postprocessing to specific voxels
