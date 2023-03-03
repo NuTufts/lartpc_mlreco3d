@@ -263,9 +263,21 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                     else:
                         loss_seg = self.cross_entropy(event_segmentation, event_label)
                         if weights is not None:
-                            loss_seg *= weights[i][batch_index][:, -1].float()
+                            if self._ghost:
+                                with torch.no_grad():
+                                    #print("ghost_mask=",ghost_mask.shape," sum=",(ghost_mask.long()==0).sum())
+                                    #print("weights=",weights[i][batch_index].shape)
+                                    weights_noghost = weights[i][batch_index][ ghost_mask.long()==0 ][:,-1].float()
+                                    #print("weights: ",weights[i][batch_index].shape," to weights_noghost=",weights_noghost.shape)
+                                loss_seg *= weights_noghost
+                            else:
+                                loss_seg *= weights[i][batch_index][:, -1].float()
                     if weights is not None:
-                        uresnet_loss += torch.sum(loss_seg)/torch.sum(weights[i][batch_index][:,-1].float())
+                        if self._ghost:
+                            uresnet_loss += torch.sum(loss_seg)/torch.sum(weights_noghost)
+                            print("weights_noghost.sum()=",torch.sum(weights_noghost))
+                        else:
+                            uresnet_loss += torch.sum(loss_seg)/torch.sum(weights[i][batch_index][:,-1].float())
                     else:
                         uresnet_loss += torch.mean(loss_seg)
 
