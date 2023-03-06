@@ -246,7 +246,7 @@ class LArCVDataset(Dataset):
             r = np.random.rand( nvoxels )
             sel = r<subsample_fraction
             print("sample down to ",sel.sum()," voxels")            
-            for x in ['input_data','segment_label','cluster_label']:
+            for x in ['input_data','segment_label','cluster_label','segment_weights']:
                 if x not in result:
                     continue
                 coord = result[x][0][sel[:]]
