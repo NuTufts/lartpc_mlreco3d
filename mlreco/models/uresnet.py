@@ -154,8 +154,24 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
         self._alpha = self._cfg.get('alpha', 1.0)
         self._beta = self._cfg.get('beta', 1.0)
         self._weight_loss = self._cfg.get('weight_loss', False)
+        self._weight_loss_power = float(self._cfg.get('weight_loss_power',1.0))
+        self._use_focal_loss = self._cfg.get('use_focal_loss',False)
+        self._focal_loss_alpha = self._cfg.get('focal_loss_alpha',0.25)
+        self._focal_loss_gamma = self._cfg.get('focal_loss_gamma',0.25)        
         self.cross_entropy = torch.nn.CrossEntropyLoss(reduction='none',ignore_index=-1)
         self._batch_col = batch_col
+
+    def focal_loss(self, inputs, targets, gamma=2, alpha=0.25):
+        p = torch.sigmoid(inputs)
+        ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+        p_t = p * targets + (1 - p) * (1 - targets)
+        loss = ce_loss * ((1 - p_t) ** gamma)
+
+        if alpha >= 0:
+            alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+            loss = alpha_t * loss
+
+        return loss
 
     def forward(self, result, label, weights=None):
         """
@@ -267,7 +283,7 @@ class SegmentationLoss(torch.nn.modules.loss._Loss):
                                 with torch.no_grad():
                                     #print("ghost_mask=",ghost_mask.shape," sum=",(ghost_mask.long()==0).sum())
                                     #print("weights=",weights[i][batch_index].shape)
-                                    weights_noghost = weights[i][batch_index][ ghost_mask.long()==0 ][:,-1].float()
+                                    weights_noghost = torch.pow( weights[i][batch_index][ ghost_mask.long()==0 ][:,-1].float(), self._weight_loss_power )
                                     #print("weights: ",weights[i][batch_index].shape," to weights_noghost=",weights_noghost.shape)
                                 loss_seg *= weights_noghost
                             else:

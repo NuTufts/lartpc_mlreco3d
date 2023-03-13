@@ -203,55 +203,70 @@ class LArCVDataset(Dataset):
     def __getitem__(self,idx):
 
         # convert to actual index: by default, it is idx, but not if event_list provided
-        event_idx = self._event_list[idx]
+        event_good = False
+        ii = 0
+        while not event_good:
 
-        # If this is the first data loading, instantiate chains
-        if not self._trees_ready:
-            from ROOT import TChain
-            for key in self._trees.keys():
-                chain = TChain(key + '_tree')
-                for f in self._files: chain.AddFile(f)
-                self._trees[key] = chain
-            self._trees_ready=True
+            iidx = idx+ii
+            if iidx>len(self._event_list):
+                ii  = 0
+                idx = 0
+                iidx = 0
+            event_idx = self._event_list[iidx]
 
-        # Move the event pointer
-        for tree in self._trees.values():
-            tree.GetEntry(event_idx)
+            # If this is the first data loading, instantiate chains
+            if not self._trees_ready:
+                from ROOT import TChain
+                for key in self._trees.keys():
+                    chain = TChain(key + '_tree')
+                    for f in self._files: chain.AddFile(f)
+                    self._trees[key] = chain
+                self._trees_ready=True
 
-        # Create data chunks
-        result = {}
-        for index, (parser, args) in enumerate(self._data_parsers):
-            kwargs = {}
-            for k, v in args.items():
-                if   'event_list' in k:
-                    kwargs[k] = [getattr(self._trees[vi], vi+'_branch') for vi in v]
-                elif 'event' in k:
-                    kwargs[k] = getattr(self._trees[v], v+'_branch')
-                else:
-                    kwargs[k] = v
-            name = self._data_keys[index]
-            result[name] = parser(**kwargs)
+            # Move the event pointer
+            for tree in self._trees.values():
+                tree.GetEntry(event_idx)
 
-        # Limit the number of voxels in the tensor.
-        # if over, sample randomly
-        #print(result)
-        coord = result['input_data'][0]
-        nvoxels = coord.shape[0]
-        print("NVOXELS: ",nvoxels)
-        sys.stdout.flush()
-        if self._nvoxel_limit>0 and nvoxels>self._nvoxel_limit:
-            print("hit voxel limit [",nvoxels,">",self._nvoxel_limit," subsampling required")
-            # we need to subsample
-            subsample_fraction = float(self._nvoxel_limit)/float(nvoxels)
-            r = np.random.rand( nvoxels )
-            sel = r<subsample_fraction
-            print("sample down to ",sel.sum()," voxels")            
-            for x in ['input_data','segment_label','cluster_label']:
-                if x not in result:
-                    continue
-                coord = result[x][0][sel[:]]
-                feat  = result[x][1][sel[:]]
-                result[x] = (coord,feat)
+            # Create data chunks
+            result = {}
+            for index, (parser, args) in enumerate(self._data_parsers):
+                kwargs = {}
+                for k, v in args.items():
+                    if   'event_list' in k:
+                        kwargs[k] = [getattr(self._trees[vi], vi+'_branch') for vi in v]
+                    elif 'event' in k:
+                        kwargs[k] = getattr(self._trees[v], v+'_branch')
+                    else:
+                        kwargs[k] = v
+                name = self._data_keys[index]
+                result[name] = parser(**kwargs)
 
-        result['index'] = event_idx
+            # Limit the number of voxels in the tensor.
+            # if over, sample randomly
+            #print(result)
+            coord = result['input_data'][0]
+            nvoxels = coord.shape[0]
+            print("NVOXELS: ",nvoxels)
+            sys.stdout.flush()
+            if self._nvoxel_limit>0 and nvoxels>self._nvoxel_limit:
+                print("hit voxel limit [",nvoxels,">",self._nvoxel_limit," subsampling required")
+                # we need to subsample
+                subsample_fraction = float(self._nvoxel_limit)/float(nvoxels)
+                r = np.random.rand( nvoxels )
+                sel = r<subsample_fraction
+                print("sample down to ",sel.sum()," voxels")            
+                for x in ['input_data','segment_label','cluster_label','segment_weights']:
+                    if x not in result:
+                        continue
+                    coord = result[x][0][sel[:]]
+                    feat  = result[x][1][sel[:]]
+                    result[x] = (coord,feat)
+
+            if nvoxels>1000:
+                event_good = True
+            else:
+                event_good = False
+                ii += 1
+                print("RE-DRAW")
+            result['index'] = event_idx
         return result
