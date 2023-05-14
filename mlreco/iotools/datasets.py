@@ -52,6 +52,7 @@ class LArCVDataset(Dataset):
             if len(self._files) >= limit_num_files: break
 
         if len(self._files)<1:
+            print("ERROR: Number of files loaded is zero.")
             raise FileNotFoundError
         elif len(self._files)>10: print(len(self._files),'files loaded')
         else:

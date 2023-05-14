@@ -1,7 +1,6 @@
 import numpy as np
 from larcv import larcv
 
-
 def parse_sparse2d(sparse_event_list):
     """
     A function to retrieve sparse tensor input from larcv::EventSparseTensor2D object
@@ -197,3 +196,107 @@ def parse_sparse3d_charge_rescaled(sparse_event_list):
     charges = np.sum((hit_charges*pmask)/multiplicity, axis=1)/np.sum(pmask, axis=1)
 
     return np_voxels[deghost], charges.reshape(-1,1)
+
+__DROPME__ = None
+def parse_sparse3d_drop_cosmics(sparse_event_list, sparse_origin_index=-1, drop_cosmic_prob=0.5 ):
+    """
+    A function to retrieve sparse tensor input from larcv::EventSparseTensor3D object
+    Drop cosmics using at random.
+    This is used to help focus training on neutrino voxels which 
+      occur at lower rates than cosmics and do look quite different.
+
+    Returns the data in format to pass to DataLoader
+
+    .. code-block:: yaml
+
+        schema:
+          input_data:
+            parser: parse_sparse3d
+            args:
+              sparse_event_list:
+                - sparse3d_pcluster_0
+                - sparse3d_pcluster_1
+                - ...
+              sparse_origin_index: -1
+              drop_cosmic_prob: float or None
+               
+
+    Configuration
+    -------------
+    sparse_event_list: list of larcv::EventSparseTensor3D
+        Can be repeated to load more features (one per feature).
+    sparse_origin_index: index in sparse_event_list that should be used as the origin feature.
+        Origin flags not included in output faeture tensor.
+    drop_cosmic_prob: for voxels tagged as cosmic, probability all will be dropped from the event
+
+    Returns
+    -------
+    voxels: numpy array(int32) with shape (N,3)
+        Coordinates
+    data: numpy array(float32) with shape (N,C)
+        Pixel values/channels, as many channels as specified larcv::EventSparseTensor3D.
+    """
+    global __DROPME__
+    np_voxels = None
+    features  = []
+    origin_index = sparse_origin_index
+    if origin_index<0:
+        origin_index = len(sparse_event_list)+origin_index
+    print("num sparse tensors: ",len(sparse_event_list))
+    print("origin index: ",origin_index)
+
+    if type(drop_cosmic_prob) is str:
+        if drop_cosmic_prob=="None":
+            drop_cosmic_prob = None
+        else:
+            drop_cosmic_prob = float(drop_cosmic_prob)
+        print("drop_cosmic_prob: ",drop_cosmic_prob," ",type(drop_cosmic_prob))
+
+    meta = None
+    num_point = None
+    for idx, sparse_event in enumerate(sparse_event_list):
+        
+        if idx==origin_index:
+            continue
+        
+        if meta is None:
+            num_point = sparse_event.as_vector().size()            
+            meta = sparse_event.meta()
+            np_voxels = np.empty(shape=(num_point, 3), dtype=np.int32)
+            larcv.fill_3d_voxels(sparse_event, np_voxels)
+        else:
+            assert meta == sparse_event.meta()
+        np_data = np.empty(shape=(num_point, 1), dtype=np.float32)
+        larcv.fill_3d_pcloud(sparse_event, np_data)
+        features.append(np_data)
+        
+    np_features = np.concatenate(features, axis=-1)
+
+    np_origin = np.empty(shape=(num_point,1),dtype=np.float32)
+    larcv.fill_3d_pcloud(sparse_event_list[origin_index],np_origin)
+
+    non_cosmic_mask = (np_origin[:,0]).astype(np.int)!=1
+    print("np_voxels: ",np_voxels.shape)    
+    print("np_data: ",np_data.shape)
+    print("np_origin: ",np_origin.shape)    
+    print("mask shape: ",non_cosmic_mask.shape)
+    print("nu voxels: ",non_cosmic_mask.sum())
+
+    if drop_cosmic_prob is not None:
+        if np.random.uniform()<drop_cosmic_prob:
+            __DROPME__ = True
+        else:
+            __DROPME__ = False
+            
+        print("rolled the dice to drop cosmics: ",__DROPME__)
+
+        if __DROPME__:
+            return np_voxels[non_cosmic_mask[:],:],np_features[non_cosmic_mask[:],:]
+        else:
+            return np_voxels,np_features
+
+    if drop_cosmic_prob is None and __DROPME__==True:
+        print("follow previous rolls to drop cosmics: ",__DROPME__)        
+        return np_voxels[non_cosmic_mask[:],:],np_features[non_cosmic_mask[:],:]
+
+    return np_voxels,np_features

@@ -7,6 +7,7 @@ import MinkowskiEngine as ME
 import MinkowskiFunctional as MF
 
 from mlreco.models.layers.common.ppnplus import PPN, PPNLonelyLoss
+from mlreco.models.layers.common.kpscorenet import KeypointScoreNet, KeypointScoreNetLoss
 from mlreco.models.uresnet import SegmentationLoss
 from collections import defaultdict
 from mlreco.models.uresnet import UResNet_Chain
@@ -27,6 +28,8 @@ class UResNetPPN(nn.Module):
 
     Configuration
     -------------
+    net_type: str
+        The type of keypoint proposal network. Options ['ppn','kpscorenet']. Default: 'ppn'
     data_dim: int, default 3
     num_input: int, default 1
     allow_bias: bool, default False
@@ -73,7 +76,15 @@ class UResNetPPN(nn.Module):
         self.ghost = cfg.get('uresnet_lonely', {}).get('ghost', False)
         assert self.ghost == cfg.get('ppn', {}).get('ghost', False)
         self.backbone = UResNet_Chain(cfg)
-        self.ppn = PPN(cfg)
+
+        self._kpnet_type = cfg.get('ppn',{}).get('net_type','ppn')
+        if self._kpnet_type=='ppn':
+            self.ppn = PPN(cfg)
+        elif self._kpnet_type=='kpscorenet':
+            self.ppn = KeypointScoreNet(cfg)
+        else:
+            raise ValueError("Unrecognized keypoint network type: ",self._kpnet_type)
+        
         self.num_classes = self.backbone.num_classes
         self.num_filters = self.backbone.F
         self.segmentation = ME.MinkowskiLinear(
@@ -95,22 +106,46 @@ class UResNetPPN(nn.Module):
 
         for igpu, x in enumerate(input_tensors):
             # input_data = x[:, :5]
+
+            # run uresnet (encoder + class/ghost decoder)
             res = self.backbone([x])
             out.update({'ghost': res['ghost']})
-            if self.ghost:
-                if self.ppn.use_true_ghost_mask:
-                    res_ppn = self.ppn(res['finalTensor'][igpu],
-                                    res['decoderTensors'][igpu],
-                                    ghost=res['ghost_sptensor'][igpu],
-                                    ghost_labels=labels)
+
+            # now run PPN
+            if self._kpnet_type=="ppn":
+                if self.ghost:
+                    if self.ppn.use_true_ghost_mask:
+                        res_ppn = self.ppn(res['finalTensor'][igpu],
+                                           res['decoderTensors'][igpu],
+                                           ghost=res['ghost_sptensor'][igpu],
+                                           ghost_labels=labels)
+                    else:
+                        res_ppn = self.ppn(res['finalTensor'][igpu],
+                                           res['decoderTensors'][igpu],
+                                           ghost=res['ghost_sptensor'][igpu])
+
                 else:
                     res_ppn = self.ppn(res['finalTensor'][igpu],
-                                    res['decoderTensors'][igpu],
-                                    ghost=res['ghost_sptensor'][igpu])
+                                       res['decoderTensors'][igpu])
+            elif self._kpnet_type=="kpscorenet":
+                """ Run KeypointScoreNetwork 
+                  Attempting to run with same signatures as PPN
+                """
+                if self.ghost:
+                    if self.ppn.use_true_ghost_mask:
+                        res_ppn = self.ppn(res['finalTensor'][igpu],
+                                           res['decoderTensors'][igpu],
+                                           ghost=res['ghost_sptensor'][igpu],
+                                           ghost_labels=labels)
+                    else:
+                        res_ppn = self.ppn(res['finalTensor'][igpu],
+                                           res['decoderTensors'][igpu],
+                                           ghost=res['ghost_sptensor'][igpu])
 
-            else:
-                res_ppn = self.ppn(res['finalTensor'][igpu],
-                                   res['decoderTensors'][igpu])
+                else:
+                    res_ppn = self.ppn(res['finalTensor'][igpu],
+                                       res['decoderTensors'][igpu])
+                
             # if self.training:
             #     res_ppn = self.ppn(res['finalTensor'], res['encoderTensors'], particles_label)
             # else:
@@ -130,7 +165,15 @@ class UResNetPPNLoss(nn.Module):
     """
     def __init__(self, cfg):
         super(UResNetPPNLoss, self).__init__()
-        self.ppn_loss = PPNLonelyLoss(cfg)
+
+        self._kpnet_type = cfg.get('ppn',{}).get('net_type','ppn')
+        if self._kpnet_type=='ppn':
+            self.ppn_loss = PPNLonelyLoss(cfg)
+        elif self._kpnet_type=='kpscorenet':
+            self.ppn_loss = KeypointScoreNetLoss(cfg)
+        else:
+            raise ValueError("Unrecognized keypoint network type: ",self._kpnet_type)
+        
         self.segmentation_loss = SegmentationLoss(cfg)
 
     def forward(self, outputs, segment_label, particles_label, weights=None):

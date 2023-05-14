@@ -75,7 +75,8 @@ from mlreco.iotools.parsers.sparse import (
     parse_sparse2d,
     parse_sparse3d,
     parse_sparse3d_ghost,
-    parse_sparse3d_charge_rescaled # TEMPORARY
+    parse_sparse3d_charge_rescaled,
+    parse_sparse3d_drop_cosmics     # TEMPORARY
 )
 
 from mlreco.iotools.parsers.cluster import (
