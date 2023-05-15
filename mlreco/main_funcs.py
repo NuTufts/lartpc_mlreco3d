@@ -311,6 +311,24 @@ def train_loop(handlers):
 
     cfg=handlers.cfg
     tsum = 0.
+
+    # if we monitor the traing loop using wandb
+    if 'wandb_config' in cfg['trainval']:
+        wandb_cfg = cfg['trainval'].get('wandb_config')
+        if bool(wandb_cfg.get('run_logger',True)):
+            import wandb
+            WANDB_PROJECT=wandb_cfg.get("project_name","")
+            if WANDB_PROJECT=="":
+                raise ValueError("If logging with WANDB, need a project name")
+            # initialize wandb logger and store the config we used
+            WANDB_ITERATIONS_PER_LOG = wandb_cfg.get("iterations_per_log")
+            wandb.init(project=WANDB_PROJECT,config=cfg)
+            if bool(wandb_cfg.get("watch_model")):
+                WANDB_ITERATIONS_PER_MODEL_LOG = wandb_cfg.get("iterations_per_model_log")
+                wandb.watch( handlers.trainer._net, log='all', log_freq=WANDB_ITERATIONS_PER_MODEL_LOG ) # data-parallel model
+                #wandb.watch( handlers.trainer._model, log='all', log_freq=NITERS_PER_MODEL_LOG )  # raw model
+
+    
     while handlers.iteration < cfg['trainval']['iterations']:
         epoch = handlers.iteration / float(len(handlers.data_io))
         tstamp_iteration = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')
@@ -344,6 +362,26 @@ def train_loop(handlers):
         log(handlers, tstamp_iteration,
             tsum, result_blob, cfg, epoch, data_blob['index'][0])
 
+        # WANDB LOGGER
+        if 'wandb_config' in cfg['trainval']:
+            wandb_cfg = cfg['trainval'].get('wandb_config')
+            log_iter = int(handlers.iteration)
+            if bool(wandb_cfg.get('run_logger',True)) and log_iter>0 and log_iter%WANDB_ITERATIONS_PER_LOG==0:
+                result_keys_to_log = wandb_cfg.get("result_keys")
+                #print("result_blob.keys(): ",result_blob.keys())
+                # need to extract result metrics
+                wandb_logged = {"epoch":epoch}
+                for result_key in result_blob:
+                    logme = False
+                    for k in result_keys_to_log:
+                        if k in result_key:
+                            logme = True
+                            break
+                    if logme and len(result_blob[result_key])>0 and result_blob[result_key][0] is not None:
+                        wandb_logged[result_key] = result_blob[result_key][0]
+                wandb.log( wandb_logged, step=log_iter )
+            
+
         # Clear GPU memory cache if necessary
         if handlers.empty_cuda_cache:
             assert torch.cuda.is_available()
@@ -355,6 +393,13 @@ def train_loop(handlers):
     # Finalize
     if handlers.csv_logger:
         handlers.csv_logger.close()
+
+    # Finalize: close wandb
+    if 'wandb_config' in cfg['trainval']:
+        wandb_cfg = cfg['trainval'].get('wandb_config')
+        if bool(wandb_cfg.get('run_logger',True)):
+            wandb.finish()
+    
 
 
 def inference_loop(handlers):
