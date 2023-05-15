@@ -368,6 +368,7 @@ def train_loop(handlers):
             log_iter = int(handlers.iteration)
             if bool(wandb_cfg.get('run_logger',True)) and log_iter>0 and log_iter%WANDB_ITERATIONS_PER_LOG==0:
                 result_keys_to_log = wandb_cfg.get("result_keys")
+                result_keys_to_exclude = wandb_cfg.get("exclude_result_keys",[])
                 #print("result_blob.keys(): ",result_blob.keys())
                 # need to extract result metrics
                 wandb_logged = {"epoch":epoch}
@@ -377,6 +378,12 @@ def train_loop(handlers):
                         if k in result_key:
                             logme = True
                             break
+                    if not logme:
+                        continue
+
+                    if result_key in result_keys_to_exclude:
+                        continue
+                    
                     if logme and len(result_blob[result_key])>0 and result_blob[result_key][0] is not None:
                         wandb_logged[result_key] = result_blob[result_key][0]
                 wandb.log( wandb_logged, step=log_iter )
