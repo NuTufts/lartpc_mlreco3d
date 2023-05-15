@@ -184,6 +184,17 @@ class KeypointScoreNet(torch.nn.Module):
     --------
     PPNLonelyLoss, mlreco.models.uresnet_ppn_chain
     '''
+
+    # CLASS DEFINITIONS
+    NUM_KP_CLASSES = 6
+    KP_CLASS_NAMES=["kp_nu",
+                    "kp_trackstart",
+                    "kp_trackend",
+                    "kp_shower",
+                    "kp_michel",
+                    "kp_delta"]
+    
+    
     def __init__(self, cfg, name='kpscore'):
         super(KeypointScoreNet, self).__init__()
         setup_cnn_configuration(self, cfg, name)
@@ -192,7 +203,7 @@ class KeypointScoreNet(torch.nn.Module):
         # UResNet Configurations
         self.reps = self.model_cfg.get('reps', 2)
         self.depth = self.model_cfg.get('depth', 5)
-        self.num_classes = self.model_cfg.get('num_classes', 6)
+        self.num_classes = KeypointScoreNet.NUM_KP_CLASSES
         self.num_filters = self.model_cfg.get('filters', 16)
         self.nPlanes = [i * self.num_filters for i in range(1, self.depth+1)]
         self.use_true_ghost_mask = self.model_cfg.get('use_true_ghost_mask',False)
@@ -319,7 +330,7 @@ class KeypointScoreNet(torch.nn.Module):
 
         # start with the output of the UResnet at the deepest layer
         x = final
-        print("[kpscorenet] input=",x.F.shape)
+        #print("[kpscorenet] input=",x.F.shape)
 
         for i, layer in enumerate(self.decoding_conv):
 
@@ -330,7 +341,7 @@ class KeypointScoreNet(torch.nn.Module):
             else:
                 x = ME.cat(decTensor, x)
             x = self.decoding_block[i](x)
-            print("[kpscorenet] layer=",x.F.shape)
+            #print("[kpscorenet] layer=",x.F.shape)
 
         # Note that we skipped ghost masking for the final sparse tensor,
         # namely the tensor with the same resolution as the input to uresnet.
@@ -372,19 +383,23 @@ class KeypointScoreNetLoss(torch.nn.modules.loss._Loss):
 
     def __init__(self, cfg, name='kpscorenet'):
         super(KeypointScoreNetLoss, self).__init__()
-        self.loss_config = cfg.get(name, {})
+        self.loss_config = cfg.get('ppn').get('kpscorenet_loss_cfg',{})
+        if len(self.loss_config)==0:
+            print("missing KeypointScoreNetLoss configuration. looking for key='kpscorenet_loss_cfg' inside 'ppn' config block")
+            raise ValueError("Missing configuration")
         self.fn_mse = torch.nn.MSELoss( reduction='none' )
-        
+        self.verbose = self.loss_config.get('verbose',True)        
         print("KPScoreNetLoss configured.")
 
     def forward(self, result, segment_labels, keypoint_labels):
 
-        print("keypointscorenet loss")
-        print(" input, result: ",result.keys())
-        print(" ppn_kpscore: shape=",result["ppn_kpscore"][0].F.shape)
-        print(" segment_labels: ntensors=",len(keypoint_labels))        
-        print(" keypoint_labels: ntensors=",len(keypoint_labels))
-        print(" keypoint_labels: shape=",keypoint_labels[0].shape)
+        if self.verbose:
+            print("keypointscorenet loss")
+            print(" input, result: ",result.keys())
+            print(" ppn_kpscore: shape=",result["ppn_kpscore"][0].F.shape)
+            print(" segment_labels: ntensors=",len(keypoint_labels))        
+            print(" keypoint_labels: ntensors=",len(keypoint_labels))
+            print(" keypoint_labels: shape=",keypoint_labels[0].shape)
 
         pred  = result["ppn_kpscore"][0].F  # score for 6 classes
         label = keypoint_labels[0][:,4:10]  # score for 6 classes. remove (batch,x,y,z)
@@ -395,14 +410,13 @@ class KeypointScoreNetLoss(torch.nn.modules.loss._Loss):
             neg_mask = label<0.05
             pos_samples = (pos_mask==True).sum()
             neg_samples = (neg_mask==True).sum()
-            print("Num pos: ",pos_samples)
-            print("Num neg: ",neg_samples)
 
         loss_pervoxel = self.fn_mse( pred, label )
 
+        res = {}
         tot_loss = 0.0
 
-        for kpclass in range(6):            
+        for kpclass in range(KeypointScoreNet.NUM_KP_CLASSES):            
             # get pos example loss
             with torch.no_grad():
                 class_pos_mask = pos_mask[:,kpclass]
@@ -412,8 +426,9 @@ class KeypointScoreNetLoss(torch.nn.modules.loss._Loss):
             
             loss_pos = loss_pervoxel[:,kpclass][ class_pos_mask ]
             loss_neg = loss_pervoxel[:,kpclass][ class_neg_mask ]
-            print("KPCLASS[",kpclass,"] pos loss shape: ",loss_pos.shape)
-            print("KPCLASS[",kpclass,"] neg loss shape: ",loss_neg.shape)
+            if self.verbose:
+                print("KPCLASS[",kpclass,",",KeypointScoreNet.KP_CLASS_NAMES[kpclass],"] pos loss shape: ",loss_pos.shape)
+                print("KPCLASS[",kpclass,",",KeypointScoreNet.KP_CLASS_NAMES[kpclass],"] neg loss shape: ",loss_neg.shape)
 
             weight_pos = 1.0
             weight_neg = 1.0
@@ -422,73 +437,62 @@ class KeypointScoreNetLoss(torch.nn.modules.loss._Loss):
             if class_nneg>0:
                 weight_neg = 1.0/class_nneg
             loss_class = loss_pos.sum()*weight_pos + loss_neg.sum()*weight_neg
-            tot_loss += loss_class/6.0
-            print("KPCLASS[",kpclass,"] weighted loss=",loss_class)
-        
-        res = {
-            'loss':tot_loss,
-            'accuracy':0.0
-        }
+            tot_loss += loss_class/float(KeypointScoreNet.NUM_KP_CLASSES)
 
+        # calculate accuracies
         with torch.no_grad():
-            print("KeypointScoreNet Loss ----------------")
-            for x in res:
-                print("  ",x,": ",res[x])
-            print("--------------------------------------")
+            acc = self.keypoint_accuracies( pred.detach(), label.detach(), verbose=self.verbose )
+        
+        res['loss'] = tot_loss
+        res.update(acc)
+
+        if self.verbose:
+            with torch.no_grad():
+                print("KeypointScoreNet Loss ----------------")
+                for x in res:
+                    print("  ",x,": ",res[x])
+                print("--------------------------------------")
             
         return res
 
-    def temp_larmatch_kploss(self):
-        
-        # KPLABEL
-        if self.eval_keypoint_label:
-            if verbose:
-                print("eval KEYPOINT loss")
-            kplabel_pred = predictions[self.keypoint_name]
-            kp_label     = truthlabels[self.keypoint_name]
-            kp_weight    = weights[self.keypoint_name]
-            kploss = self.use_this_kp_loss( kplabel_pred, kp_label, kp_weight, verbose=verbose )
-            if not self.learnable_weights:
-                if loss["tot"] is None:
-                    loss["tot"] = kploss
-                else:
-                    loss["tot"] += kploss
-            else:
-                if verbose:
-                    print("keypoint loss weight: ",self.task_weights[self.keypoint_name]," exp(-w)=",torch.exp(-self.task_weights[self.keypoint_name].detach()))
-                weighted_kploss = kploss*torch.exp(-self.task_weights[self.keypoint_name]) + 0.5*self.task_weights[self.keypoint_name]
-                if loss["tot"] is None:
-                    loss["tot"] = weighted_kploss
-                else:
-                    loss["tot"] += weighted_kploss
-            loss[self.keypoint_name] = kploss.detach().item()
-    
-    def keypoint_loss( self, keypoint_score_pred,
-                       keypoint_score_truth,
-                       keypoint_weight,
-                       verbose=False):
-        npairs = keypoint_score_pred.shape[0]
-        # only evaluate on true match points
-        # if keypoint_score_truth.shape[0]!=keypoint_score_pred.shape[0]:
-        #     # when truth and prediction have different lengths,
-        #     # the truth already has removed bad points
-        #     raise RuntimeError("dont trust this mode of calculation right now")
-        #     sel_kplabel_pred = torch.index_select( keypoint_score_pred, 0, truematch_index )
-        #     sel_kpweight     = torch.index_select( keypoint_weight, 0, truematch_index )
-        #     sel_kplabel      = torch.index_select( keypoint_score_truth, 0, truematch_index )
-        # else:
-        if verbose:
-            print("  keypoint_score_pred:  ",keypoint_score_pred.shape)
-            print("  keypoint_score_truth: ",keypoint_score_truth.shape)
-            print("  keypoint_weight: ",keypoint_weight.shape)
-        fn_kp = torch.nn.MSELoss( reduction='none' )
-        fnout = fn_kp( keypoint_score_pred, keypoint_score_truth )
-        if verbose:
-            print("  fnout shape: ",fnout.shape)
-        #kp_loss  = (fnout*keypoint_weight).sum()/float(keypoint_score_pred.shape[0])
-        kp_loss  = (fnout*keypoint_weight).sum()
-        kp_floss = kp_loss.detach().item()
-        if verbose:
-            print(" loss-kplabel: ",kp_floss)
+    def keypoint_accuracies( self, kp_pred, kp_label, verbose=False ):
+        """
+        inputs
+        kp_pred: tensor 
+          Expects shape (N,class)
+        kp_label: tensor
+          Expects shape (N,class)
 
-        return kp_loss
+        outputs
+        -------
+
+        dict with accuracies for positive and negative examples for each class type
+        """
+        acc = {}
+        tot_corr = 0.0
+        tot_calc = 0.0
+        for c,kpname in enumerate(KeypointScoreNet.KP_CLASS_NAMES):
+            kp_n_pos    = float(kp_label[:,c].ge(0.5).sum().item())
+            kp_corr_pos = float(kp_pred[:,c].ge(0.5)[ kp_label[:,c].ge(0.5) ].sum().item())
+            if verbose: print("kp[",c,"-",kpname,"] n_pos[>0.5]: ",kp_n_pos," pred[>0.5]: ",kp_corr_pos)
+            kp_n_neg    = float(kp_label[:,c].lt(0.5).sum().item())
+            kp_corr_neg = float(kp_pred[:,c].lt(0.5)[ kp_label[:,c].lt(0.5) ].sum().item())
+            if verbose: print("kp[",c,"-",kpname,"] n_pos[<0.5]: ",kp_n_neg," pred[<0.5]: ",kp_corr_neg)
+            if kp_n_pos>0:
+                acc[kpname+"_pos"] = kp_corr_pos/kp_n_pos
+            else:
+                acc[kpname+"_pos"] = None
+            if kp_n_neg>0:
+                acc[kpname+"_neg"] = kp_corr_neg/kp_n_neg
+            else:
+                acc[kpname+"_neg"] = None
+
+            tot_corr += kp_corr_neg + kp_corr_pos
+            tot_calc += kp_n_pos + kp_n_neg
+            
+        if tot_calc>0.0:
+            acc['accuracy'] = tot_corr/tot_calc
+        else:
+            acc['accuracy'] = None
+            
+        return acc
