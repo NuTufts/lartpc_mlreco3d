@@ -481,11 +481,11 @@ class KeypointScoreNetLoss(torch.nn.modules.loss._Loss):
             if kp_n_pos>0:
                 acc[kpname+"_pos"] = kp_corr_pos/kp_n_pos
             else:
-                acc[kpname+"_pos"] = None
+                acc[kpname+"_pos"] = 0.0 # None
             if kp_n_neg>0:
                 acc[kpname+"_neg"] = kp_corr_neg/kp_n_neg
             else:
-                acc[kpname+"_neg"] = None
+                acc[kpname+"_neg"] = 0.0 # None
 
             tot_corr += kp_corr_neg + kp_corr_pos
             tot_calc += kp_n_pos + kp_n_neg
@@ -493,6 +493,6 @@ class KeypointScoreNetLoss(torch.nn.modules.loss._Loss):
         if tot_calc>0.0:
             acc['accuracy'] = tot_corr/tot_calc
         else:
-            acc['accuracy'] = None
+            acc['accuracy'] = 0.0 # None
             
         return acc

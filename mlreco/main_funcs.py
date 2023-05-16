@@ -20,6 +20,8 @@ class Handlers:
     cfg          = None
     data_io      = None
     data_io_iter = None
+    valid_data_io      = None
+    valid_data_io_iter = None
     csv_logger   = None
     weight_io    = None
     train_logger = None
@@ -163,6 +165,8 @@ def prepare(cfg, event_list=None):
     Prepares high level API handlers, namely trainval instance and torch DataLoader (w/ iterator)
     INPUT
       - cfg is a full configuration block after pre-processed by process_config function
+      - event_list: a list of integers. we will sample from this subset of entries in the dataset if provided
+      - use_alt_data_list: str. Passed to loader_factory function to switch the data list used. example: activate a validation set. 
     OUTPUT
       - Handler instance attached with trainval/DataLoader instances (if in config)
     """
@@ -173,10 +177,17 @@ def prepare(cfg, event_list=None):
     handlers.cfg = cfg
 
     # Instantiate DataLoader
-    handlers.data_io = loader_factory(cfg, event_list=event_list)
+    handlers.data_io = loader_factory(cfg, event_list=event_list, use_alt_data_list=None)
 
     # IO iterator
     handlers.data_io_iter = iter(cycle(handlers.data_io))
+
+    # Validation Instantiate DataLoader
+    handlers.valid_data_io = loader_factory(cfg, event_list=event_list, use_alt_data_list="validation_data_keys")
+
+    # Validation IO iterator
+    handlers.valid_data_io_iter = iter(cycle(handlers.valid_data_io))
+    
 
     if 'trainval' in cfg:
         # Set random seed for reproducibility
@@ -241,6 +252,7 @@ def log(handlers, tstamp_iteration, #tspent_io, tspent_iteration,
         if len(res[key]) == 0:
             continue
         if isinstance(res[key][0], float) or isinstance(res[key][0], int):
+            print("log: key=",key," res[key]=",res[key])
             if "count" not in key:
                 res_dict[key] = np.mean([np.array(t).mean() for t in res[key]])
             else:
@@ -312,6 +324,8 @@ def train_loop(handlers):
     cfg=handlers.cfg
     tsum = 0.
 
+    ngpus = len(cfg['trainval']['gpus'])
+
     # if we monitor the traing loop using wandb
     if 'wandb_config' in cfg['trainval']:
         wandb_cfg = cfg['trainval'].get('wandb_config')
@@ -367,6 +381,14 @@ def train_loop(handlers):
             wandb_cfg = cfg['trainval'].get('wandb_config')
             log_iter = int(handlers.iteration)
             if bool(wandb_cfg.get('run_logger',True)) and log_iter>0 and log_iter%WANDB_ITERATIONS_PER_LOG==0:
+
+                # do validation here?
+                with torch.no_grad():
+                    handlers.trainer._net.eval().cuda() if ngpus else handlers.trainer._net.eval()
+                    valid_data_blob, valid_result_blob = handlers.trainer.forward(handlers.valid_data_io_iter)
+                    handlers.trainer._net.train().cuda() if ngpus else handlers.trainer._net.train()
+
+                
                 result_keys_to_log = wandb_cfg.get("result_keys")
                 result_keys_to_exclude = wandb_cfg.get("exclude_result_keys",[])
                 #print("result_blob.keys(): ",result_blob.keys())
@@ -386,6 +408,7 @@ def train_loop(handlers):
                     
                     if logme and len(result_blob[result_key])>0 and result_blob[result_key][0] is not None:
                         wandb_logged[result_key] = result_blob[result_key][0]
+                        wandb_logged["valid_"+result_key] = valid_result_blob[result_key][0]
                 wandb.log( wandb_logged, step=log_iter )
             
 

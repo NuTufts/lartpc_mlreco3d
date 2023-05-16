@@ -16,7 +16,7 @@ class LArCVDataset(Dataset):
     """
     def __init__(self, data_schema, data_keys, limit_num_files=0, limit_num_samples=0,
                  event_list=None, skip_event_list=None, nvoxel_limit=-1,
-                 apply_crop=False,crop_cfg=None):
+                 apply_crop=False,crop_cfg=None,use_alt_data_list=None):
         """
         Instantiates the LArCVDataset.
 
@@ -191,7 +191,12 @@ class LArCVDataset(Dataset):
     @staticmethod
     def create(cfg):
         data_schema = cfg['schema']
-        data_keys   = cfg['data_keys']
+        if 'alt_data_list' in cfg:
+            print("CREATE LArCVDataset using ALT data list: ",cfg['alt_data_list'])
+            data_keys = cfg[cfg['alt_data_list']]
+        else:
+            print("CREATE LArCVDataset")
+            data_keys   = cfg['data_keys']
         lnf         = 0 if not 'limit_num_files' in cfg else int(cfg['limit_num_files'])
         lns         = 0 if not 'limit_num_samples' in cfg else int(cfg['limit_num_samples'])
         event_list  = LArCVDataset.get_event_list(cfg, 'event_list')

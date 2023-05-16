@@ -5,7 +5,7 @@ based on the YAML configuration that was provided.
 from torch.utils.data import DataLoader
 
 
-def dataset_factory(cfg,event_list=None):
+def dataset_factory(cfg,event_list=None, use_alt_data_list=None):
     """
     Instantiates dataset based on type specified in configuration under
     `iotool.dataset.name`. The name must match the name of a class under
@@ -19,10 +19,12 @@ def dataset_factory(cfg,event_list=None):
     params = cfg['iotool']['dataset']
     if event_list is not None:
         params['event_list'] = str(list(event_list))
+    if use_alt_data_list is not None:
+        params['alt_data_list'] = use_alt_data_list
     return getattr(mlreco.iotools.datasets, params['name']).create(params)
 
 
-def loader_factory(cfg,event_list=None):
+def loader_factory(cfg,event_list=None, use_alt_data_list=None):
     """
     Instantiates a DataLoader based on configuration.
 
@@ -59,7 +61,7 @@ def loader_factory(cfg,event_list=None):
     import mlreco.iotools.samplers
     from functools import partial
 
-    ds = dataset_factory(cfg,event_list)
+    ds = dataset_factory(cfg,event_list,use_alt_data_list=use_alt_data_list)
     sampler = None
     if 'sampler' in cfg['iotool']:
         sam_cfg = cfg['iotool']['sampler']
