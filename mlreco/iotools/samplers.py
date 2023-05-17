@@ -48,6 +48,16 @@ class SequentialBatchSampler(AbstractBatchSampler):
     def create(ds, cfg):
         return SequentialBatchSampler(len(ds), cfg['minibatch_size'])
 
+class RandomStartSequentialBatchSampler(AbstractBatchSampler):
+    def __iter__(self):
+        starts = np.arange(0, self._data_size+1 - self._minibatch_size, self._minibatch_size)
+        self._random.shuffle(starts)
+        return iter(np.concatenate([np.arange(start, start+self._minibatch_size) for start in starts]))
+
+    @staticmethod
+    def create(ds, cfg):
+        return RandomStartSequentialBatchSampler(len(ds), cfg['minibatch_size'], seed=cfg.get('seed',-1))
+    
 
 class BootstrapBatchSampler(AbstractBatchSampler):
     '''
