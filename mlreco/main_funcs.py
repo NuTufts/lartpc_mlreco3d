@@ -394,7 +394,7 @@ def train_loop(handlers):
             handlers.watch.stop('iteration')
             tsum += handlers.watch.time('iteration')
 
-        if cfg['rank']==0:
+        if cfg['rank']==0 and handlers.trainer._run_csv_logger:
             print("[RANK-",cfg['rank'],"] run the logger")
             log(handlers, tstamp_iteration,
                 tsum, result_blob, cfg, epoch, data_blob['index'][0])

@@ -313,7 +313,7 @@ class UResNet(torch.nn.Module):
 
     def forward(self, input):
 
-        print(input)
+        #print(input)
         
         coords = input[:, 0:self.D+1].int()
         features = input[:, self.D+1:].float()

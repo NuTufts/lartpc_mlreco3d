@@ -35,6 +35,7 @@ class trainval(object):
         self._learning_rate = self._trainval_config.get('learning_rate') # deprecate to move to optimizer args
         #self._model_path = self._trainval_config.get('model_path', '')
         self._restore_optimizer = self._trainval_config.get('restore_optimizer',False)
+        self._run_csv_logger = self._trainval_config.get('run_csv_logger',True)
         # optimizer
         optim_cfg = self._trainval_config.get('optimizer')
         if optim_cfg is not None:
