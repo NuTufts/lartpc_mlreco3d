@@ -352,7 +352,7 @@ class KeypointScoreNet(torch.nn.Module):
         x = self.final_block(x)
         score_pred = self.kpscore_pred(x)
         
-        print("[kpscorenet] layer=",score_pred.F.shape)
+        #print("[kpscorenet] layer=",score_pred.F.shape)
 
         res = {
             'ppn_kpscore': [score_pred]
@@ -396,12 +396,12 @@ class KeypointScoreNetLoss(torch.nn.modules.loss._Loss):
         if self.verbose:
             print("keypointscorenet loss")
             print(" input, result: ",result.keys())
-            print(" ppn_kpscore: shape=",result["ppn_kpscore"][0].F.shape)
+            print(" ppn_kpscore: shape=",result["ppn_kpscore"].shape)
             print(" segment_labels: ntensors=",len(keypoint_labels))        
             print(" keypoint_labels: ntensors=",len(keypoint_labels))
             print(" keypoint_labels: shape=",keypoint_labels[0].shape)
 
-        pred  = result["ppn_kpscore"][0].F  # score for 6 classes
+        pred  = result["ppn_kpscore"][0]       # score for 6 classes
         label = keypoint_labels[0][:,4:10]  # score for 6 classes. remove (batch,x,y,z)
 
         # to get a per-voxel weight, we need to get a positive and negative example mask

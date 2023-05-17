@@ -312,6 +312,9 @@ class UResNet(torch.nn.Module):
         #             sum(p.numel() for p in self.parameters() if p.requires_grad)))
 
     def forward(self, input):
+
+        print(input)
+        
         coords = input[:, 0:self.D+1].int()
         features = input[:, self.D+1:].float()
 

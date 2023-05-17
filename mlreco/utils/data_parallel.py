@@ -6,6 +6,7 @@ from torch.nn.parallel.scatter_gather import scatter, gather, scatter_kwargs
 
 
 class DataParallel(torch.nn.parallel.DataParallel):
+#class DataParallel(torch.nn.parallel.DistributedDataParallel):
     """
     Scatters and gathers data for multi-gpu training.
 

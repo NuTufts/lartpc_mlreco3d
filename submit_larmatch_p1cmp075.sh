@@ -1,12 +1,12 @@
 #!/bin/bash
 
-#SBATCH --job-name=mlreco
-#SBATCH --output=gridlog_mlreco.log
+#SBATCH --job-name=mlreco_p100
+#SBATCH --output=gridlog_mlreco_p100.log
 #SBATCH --mem-per-cpu=8g
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-gpu=2
 #SBATCH --time=6-00:00:00
-#SBATCH --gres=gpu:a100:1
-#SBATCH --partition=gpu,ccgpu
+#SBATCH --gres=gpu:p100:4
+#SBATCH --partition=gpu,ccgpu,wongjiradlab
 #SBATCH --error=gridlog_train_larmatch.%j.%N.err
 
 WORKDIR=/cluster/tufts/wongjiradlabnu/twongj01/mlreco/lartpc_mlreco3d/

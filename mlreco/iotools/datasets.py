@@ -273,7 +273,7 @@ class LArCVDataset(Dataset):
             #print(result)
             coord = result['input_data'][0]
             nvoxels = coord.shape[0]
-            #print("NVOXELS: ",nvoxels)
+            #print("[IDX=",event_idx,"] NVOXELS: ",nvoxels)
             #sys.stdout.flush()
             
             if self._nvoxel_limit>0 and nvoxels>self._nvoxel_limit:
@@ -295,9 +295,12 @@ class LArCVDataset(Dataset):
         result: dict
            contains the different torch tensor products        
         """
-        print("result keys: ",result.keys())
-        sys.stdout.flush()
+        coord = result['input_data'][0]
+        nvoxels = coord.shape[0]
+        #print("result keys: ",result.keys())
         print("hit voxel limit [",nvoxels,">",self._nvoxel_limit," subsampling required")
+        sys.stdout.flush()
+        
         # we need to subsample
         subsample_fraction = float(self._nvoxel_limit)/float(nvoxels)
         r = np.random.rand( nvoxels )

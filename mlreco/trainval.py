@@ -20,9 +20,10 @@ class trainval(object):
         self._model_config = cfg['model']
         self._trainval_config = cfg['trainval']
         self._iotool_config = cfg['iotool']
-
-        self._weight_prefix = self._trainval_config.get('weight_prefix', '')
+        self._rank = cfg.get('rank',0)
+        self._ddp  = cfg.get('ddp',False)
         self._gpus = self._trainval_config.get('gpus', [])
+        self._weight_prefix = self._trainval_config.get('weight_prefix', '')
         self._batch_size = self._iotool_config.get('batch_size', 1)
         self._minibatch_size = self._iotool_config.get('minibatch_size')
         self._input_keys  = self._model_config.get('network_input', [])
@@ -204,6 +205,7 @@ class trainval(object):
         for idx in range(num_forward):
             self._watch.start('io')
             input_data = self.get_data_minibatched(data_iter)
+
             input_train, input_loss = self.make_input_forward(input_data)
 
             self._watch.stop('io')
@@ -278,12 +280,12 @@ class trainval(object):
             self._watch.start('forward')
             self._watch.start_cputime('forward_cpu')
 
-            if not len(self._gpus):
+            if not len(self._gpus) or self._ddp:
                 train_blob = train_blob[0]
             #print(not self._net.device_ids)
             result = self._net(train_blob)
 
-            if not len(self._gpus):
+            if not len(self._gpus) or self._ddp:
                 train_blob = [train_blob]
 
             # Compute the loss
@@ -492,7 +494,12 @@ class trainval(object):
 
         self._model = model(module_config)
 
-        self._net = DataParallel(self._model, device_ids=self._gpus)
+        if not self._ddp:
+            self._net = DataParallel(self._model, device_ids=self._gpus)
+        else:
+            device = torch.device("cuda:%d"%(self._gpus[0]))
+            self._model.to(device)            
+            self._net = torch.nn.parallel.DistributedDataParallel(self._model, device_ids=self._gpus,find_unused_parameters=True)
 
         if self._train:
             self._net.train().cuda() if len(self._gpus) else self._net.train().cpu()

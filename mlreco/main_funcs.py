@@ -41,6 +41,9 @@ def cycle(data_io):
 
 def train(cfg, event_list=None):
     handlers = prepare(cfg, event_list=event_list)
+    if cfg['ddp']:
+        print("[RANK ",cfg['rank'],"] Wait for all processes to finish preparation.")
+        torch.distributed.barrier()
     train_loop(handlers)
 
 
@@ -49,18 +52,20 @@ def inference(cfg, event_list=None):
     inference_loop(handlers)
 
 
+def set_cuda_visible_devices(cfg):
+    str_dev = ""
+    for i,gid in enumerate(cfg['trainval']['gpus']):
+        str_dev += "%d"%(gid)
+        if i+1<=len(cfg['trainval']['gpus']):
+            str_dev += ","
+    os.environ['CUDA_VISIBLE_DEVICES'] = str_dev
+    
 def process_config(cfg, verbose=True):
 
     if 'trainval' in cfg:
         # Set GPUs to be used
         if cfg['trainval']['gpus'] is str:
             cfg['trainval']['gpus'] = list(range(len([int(a) for a in cfg['trainval']['gpus'].split(',') if a.isdigit()])))
-        str_dev = ""
-        for i,gid in enumerate(cfg['trainval']['gpus']):
-            str_dev += "%d"%(gid)
-            if i+1<=len(cfg['trainval']['gpus']):
-                str_dev += ","
-        os.environ['CUDA_VISIBLE_DEVICES'] = str_dev
 
         # Update seed
         if cfg['trainval']['seed'] < 0:
@@ -96,6 +101,9 @@ def process_config(cfg, verbose=True):
         if 'concat_result' not in cfg['trainval']:
             cfg['trainval']['concat_result'] = default_concat_result
 
+    if 'ddp' not in cfg:
+        cfg['ddp'] = False
+
     if 'iotool' in cfg:
 
         # Update IO seed
@@ -123,7 +131,7 @@ def process_config(cfg, verbose=True):
         print('batch_size: ',cfg['iotool']['batch_size'])
         print('minibatch_size: ',cfg['iotool']['minibatch_size'])
         print('num_gpus: ',num_gpus)
-        if not (cfg['iotool']['batch_size'] % (cfg['iotool']['minibatch_size'] * num_gpus)) == 0:
+        if not cfg['ddp'] and not (cfg['iotool']['batch_size'] % (cfg['iotool']['minibatch_size'] * num_gpus)) == 0:
             raise ValueError('BATCH_SIZE (-bs) must be multiples of MINIBATCH_SIZE (-mbs) and GPU count (--gpus)!')
 
     # Report where config processed
@@ -201,9 +209,6 @@ def prepare(cfg, event_list=None):
         # Trainer configuration
         handlers.trainer = trainval(cfg)
 
-        # set the shared clock
-        handlers.watch = handlers.trainer._watch
-
         # Clear cache
         handlers.empty_cuda_cache = cfg['trainval'].get('empty_cuda_cache', False)
 
@@ -212,7 +217,15 @@ def prepare(cfg, event_list=None):
         if cfg['trainval']['train']:
             handlers.iteration = loaded_iteration
 
-        make_directories(cfg, loaded_iteration, handlers=handlers)
+        # Make output directories. Reserver this for rank-0 process.
+        if not cfg['ddp'] or (cfg['ddp'] and cfg['rank']==0):
+            make_directories(cfg, loaded_iteration, handlers=handlers)
+
+        # set the shared clock
+        if not cfg['ddp'] or (cfg['ddp'] and cfg['rank']==0):        
+            handlers.watch = handlers.trainer._watch
+
+            
 
     return handlers
 
@@ -252,7 +265,7 @@ def log(handlers, tstamp_iteration, #tspent_io, tspent_iteration,
         if len(res[key]) == 0:
             continue
         if isinstance(res[key][0], float) or isinstance(res[key][0], int):
-            print("log: key=",key," res[key]=",res[key])
+            #print("log: key=",key," res[key]=",res[key])
             if "count" not in key:
                 res_dict[key] = np.mean([np.array(t).mean() for t in res[key]])
             else:
@@ -329,7 +342,7 @@ def train_loop(handlers):
     # if we monitor the traing loop using wandb
     if 'wandb_config' in cfg['trainval']:
         wandb_cfg = cfg['trainval'].get('wandb_config')
-        if bool(wandb_cfg.get('run_logger',True)):
+        if cfg['rank']==0 and bool(wandb_cfg.get('run_logger',True)):
             import wandb
             WANDB_PROJECT=wandb_cfg.get("project_name","")
             if WANDB_PROJECT=="":
@@ -344,9 +357,14 @@ def train_loop(handlers):
 
     
     while handlers.iteration < cfg['trainval']['iterations']:
+        print("///////////////////////////////////////////////")
+        print("[RANK-",cfg['rank'],"] start the iteration")
+        sys.stdout.flush()
+        
         epoch = handlers.iteration / float(len(handlers.data_io))
         tstamp_iteration = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')
-        handlers.watch.start('iteration')
+        if cfg['rank']==0:
+            handlers.watch.start('iteration')
 
         checkpt_step = cfg['trainval']['checkpoint_step'] and \
                         cfg['trainval']['weight_prefix'] and \
@@ -360,34 +378,42 @@ def train_loop(handlers):
             data_blob, result_blob = handlers.trainer.train_step(handlers.data_io_iter)
 
         # Save snapshot
-        if checkpt_step:
+        if checkpt_step and cfg['rank']==0:
+            print("[RANK-",cfg['rank'],"] Checkpoint Step: save the state")
             handlers.trainer.save_state(handlers.iteration)
 
         # Store output if requested
-        if 'post_processing' in cfg:
+        if 'post_processing' in cfg and cfg['rank']==0:
+            print("[RANK-",cfg['rank'],"] Post-processing")
             for processor_name,processor_cfg in cfg['post_processing'].items():
                 processor_name = processor_name.split('+')[0]
                 processor = getattr(post_processing,str(processor_name))
                 processor(cfg,processor_cfg,data_blob,result_blob,cfg['trainval']['log_dir'],handlers.iteration)
 
-        handlers.watch.stop('iteration')
-        tsum += handlers.watch.time('iteration')
+        if cfg['rank']==0:
+            handlers.watch.stop('iteration')
+            tsum += handlers.watch.time('iteration')
 
-        log(handlers, tstamp_iteration,
-            tsum, result_blob, cfg, epoch, data_blob['index'][0])
+        if cfg['rank']==0:
+            print("[RANK-",cfg['rank'],"] run the logger")
+            log(handlers, tstamp_iteration,
+                tsum, result_blob, cfg, epoch, data_blob['index'][0])
 
-        # WANDB LOGGER
-        if 'wandb_config' in cfg['trainval']:
+        # VALIDATION STEP AND WANDB LOGGER
+        if 'wandb_config' in cfg['trainval'] and bool(cfg['trainval']['wandb_config'].get('run_logger',True)):
             wandb_cfg = cfg['trainval'].get('wandb_config')
             log_iter = int(handlers.iteration)
-            if bool(wandb_cfg.get('run_logger',True)) and log_iter>0 and log_iter%WANDB_ITERATIONS_PER_LOG==0:
 
-                # do validation here?
-                with torch.no_grad():
-                    handlers.trainer._net.eval().cuda() if ngpus else handlers.trainer._net.eval()
-                    valid_data_blob, valid_result_blob = handlers.trainer.forward(handlers.valid_data_io_iter)
-                    handlers.trainer._net.train().cuda() if ngpus else handlers.trainer._net.train()
-
+            # do validation. all ranks must do this to keep sync?
+            with torch.no_grad():
+                handlers.trainer._net.eval().cuda() if ngpus else handlers.trainer._net.eval()
+                valid_data_blob, valid_result_blob = handlers.trainer.forward(handlers.valid_data_io_iter)
+                handlers.trainer._net.train().cuda() if ngpus else handlers.trainer._net.train()
+            
+            if cfg['rank']==0  and log_iter>0 and log_iter%WANDB_ITERATIONS_PER_LOG==0:
+                
+                print("[RANK-",cfg['rank'],"] send results to wandb")
+            
                 
                 result_keys_to_log = wandb_cfg.get("result_keys")
                 result_keys_to_exclude = wandb_cfg.get("exclude_result_keys",[])
@@ -407,7 +433,9 @@ def train_loop(handlers):
                         continue
                     
                     if logme and len(result_blob[result_key])>0 and result_blob[result_key][0] is not None:
+                        # training set metrics
                         wandb_logged[result_key] = result_blob[result_key][0]
+                        # validation set metrics
                         wandb_logged["valid_"+result_key] = valid_result_blob[result_key][0]
                 wandb.log( wandb_logged, step=log_iter )
             
@@ -420,12 +448,19 @@ def train_loop(handlers):
         # Increment iteration counter
         handlers.iteration += 1
 
+        # flush the buffer
+        sys.stdout.flush()
+        
+        if 'ddp' in cfg and cfg['ddp']:
+            print("[RANK-",cfg['rank'],"] wait for all processes to start iteration=",handlers.iteration)
+            torch.distributed.barrier()        
+
     # Finalize
-    if handlers.csv_logger:
+    if cfg['rank']==0 and handlers.csv_logger:
         handlers.csv_logger.close()
 
     # Finalize: close wandb
-    if 'wandb_config' in cfg['trainval']:
+    if 'wandb_config' in cfg['trainval'] and cfg['rank']==0:
         wandb_cfg = cfg['trainval'].get('wandb_config')
         if bool(wandb_cfg.get('run_logger',True)):
             wandb.finish()

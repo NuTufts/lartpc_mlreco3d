@@ -152,7 +152,14 @@ class UResNetPPN(nn.Module):
             #     res_ppn = self.ppn(res['finalTensor'], res['encoderTensors'])
             segmentation = self.segmentation(res['decoderTensors'][igpu][-1])
             out['segmentation'].append(segmentation.F)
-            out.update(res_ppn)
+
+            if self._kpnet_type=="ppn":
+                out['points'].append(res_ppn['points'])
+                out['mask_ppn'].append(res_ppn['mask_ppn'])
+                out['ppn_layers'].append(res_ppn['ppn_layers'])
+                out['ppn_coords'].append(res_ppn['ppn_coords'])
+            elif self._kpnet_type=="kpscorenet":
+                out['ppn_kpscore'].append(res_ppn['ppn_kpscore'][igpu].F)
 
         return out
 
@@ -188,6 +195,7 @@ class UResNetPPNLoss(nn.Module):
             'loss': res_segmentation['loss'] + res_ppn['loss'],
             'accuracy': (res_segmentation['accuracy'] + res_ppn['accuracy'])/2
         }
+
         res.update({'segmentation_'+k:v for k, v in res_segmentation.items()})
         res.update({'ppn_'+k:v for k, v in res_ppn.items()})
 
