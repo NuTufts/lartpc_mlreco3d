@@ -153,7 +153,7 @@ class LArCVDataset(Dataset):
         # Cropper configuration
         self.apply_crop = apply_crop
         self.crop_cfg   = crop_cfg
-
+        print("LArCVDataset.apply_crop=",self.apply_crop)
         print('Found %d events in file(s)' % len(self._event_list))
 
         # Flag to identify if Trees are initialized or not
@@ -203,6 +203,7 @@ class LArCVDataset(Dataset):
         skip_event_list = LArCVDataset.get_event_list(cfg, 'skip_event_list')
         nvoxel_limit = -1 if not 'nvoxel_limit' in cfg else int(cfg['nvoxel_limit'])
         docrop       = bool(cfg['apply_crop'])
+        #print("create dataset: docrop=",docrop)
         if docrop:
             crop_cfg = cfg.get('crop_cfg',{})
         else:
